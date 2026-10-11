@@ -13,6 +13,7 @@ type Config struct {
 	BotToken    string
 	DatabaseURL string
 	WebAppURL   string
+	UploadDir   string
 	Port        string
 	AdminIDs    map[int64]struct{}
 }
@@ -22,10 +23,14 @@ func Load() (Config, error) {
 		BotToken:    strings.TrimSpace(os.Getenv("BOT_TOKEN")),
 		DatabaseURL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		WebAppURL:   strings.TrimSpace(os.Getenv("WEBAPP_URL")),
+		UploadDir:   strings.TrimSpace(os.Getenv("UPLOAD_DIR")),
 		Port:        strings.TrimSpace(os.Getenv("PORT")),
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"
+	}
+	if cfg.UploadDir == "" {
+		cfg.UploadDir = "./uploads"
 	}
 	if _, err := strconv.Atoi(cfg.Port); err != nil {
 		return Config{}, fmt.Errorf("PORT must be a number: %w", err)

@@ -1,54 +1,65 @@
-# Ино-мекопы — backend MVP
+# Иномекопы — backend и Telegram Mini App
 
-Backend на Go + `net/http` + PostgreSQL для Telegram Mini App. Реализовано:
+Монолит на Go (`net/http`) + PostgreSQL (`pgx`) и frontend на React + TypeScript + Vite. Код разделён на функциональные блоки; бот, API и Mini App используют одну базу.
 
-- проверка подписи `Telegram.WebApp.initData` и `auth_date`;
-- создание/обновление профиля по Telegram ID;
-- активация одноразового промокода;
-- начисление золота и запись транзакции в одной транзакции PostgreSQL;
-- выдача существа `ino-sprout` по шаблону `mecop150`;
-- админ API для генерации партий, просмотра статистики и отзыва партии;
-- минимальный Telegram long-polling бот с `/start` и кнопкой Mini App.
+## Функции
 
-Исходники React + TypeScript Mini App находятся в каталоге `frontend/`. Mini App отправляет исходный `Telegram.WebApp.initData` в заголовке `Authorization: tma <initData>`.
+- Telegram Mini App авторизация: сервер проверяет исходный `initData` по токену бота.
+- Игроки, золото, одноразовые коды и выдача иномеконов.
+- Партии кодов с QR-ссылками, CSV-экспортом и отзывом партии.
+- Каталог видов иномеконов: изображение PNG/JPEG/GIF, редкость, пассивное золото/час, здоровье, урон, шанс критического удара и назначенная способность.
+- Каталог способностей: сила, точность, перезарядка в секундах, эффект, сила и длительность эффекта в ходах.
+- Арена PvP: вызовы между игроками, принятие/отклонение, пошаговая дуэль, обычная атака и способность.
+- Боевые броски, урон, критические удары, промахи, оглушение, горение, замедление/ослабление и щит рассчитываются на backend. Клиент не присылает значение урона или победителя.
+- Пассивный доход начисляется при чтении игрового профиля. Доли меньше одного золота сохраняются, чтобы начисления не терялись из-за частых запросов. Учитывается время получения каждого существа.
 
-## 1. Требования
+## Структура
 
-- Go 1.23+;
-- PostgreSQL 14+;
-- Telegram bot token от [@BotFather](https://t.me/BotFather);
-- HTTPS URL для Mini App, когда фронтенд будет опубликован.
-
-## 2. Настроить PostgreSQL
-
-Создай базу и пользователя. Пример для локальной разработки:
-
-```sql
-CREATE USER inomecops WITH PASSWORD 'change-me';
-CREATE DATABASE inomecops OWNER inomecops;
+```text
+cmd/server/                    запуск API и Telegram-бота
+internal/features/auth/       Telegram auth и профиль
+internal/features/codes/      промокоды и коллекция
+internal/features/admin_panel/ управление партиями кодов
+internal/features/catalog/    каталог существ/способностей и изображения
+internal/features/gameplay/   пассивный доход, дуэли и боевой движок
+internal/router/               HTTP routes
+migrations/                    SQL migrations
+frontend/                       React + TypeScript + Vite
 ```
 
-Примени миграцию из каталога `backend`:
+## Требования
+
+- Go 1.23+ (рекомендуется актуальная стабильная версия)
+- PostgreSQL
+- Node.js и npm для сборки frontend
+- Telegram bot token от `@BotFather`
+
+## Миграции БД
+
+Применяй миграции по порядку, по одному разу. Если `001` и `002` уже применены, **не запускай их повторно** — выполни только `003_gameplay.sql`.
 
 ```bash
-psql "postgres://inomecops:change-me@localhost:5432/inomecops?sslmode=disable" -f migrations/001_init.sql
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/001_init.sql
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/002_creature_catalog.sql
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/003_gameplay.sql
 ```
 
-## 3. Переменные окружения
+`003_gameplay.sql` добавляет поля пассивного дохода и таблицу `game_battles`, а длительность эффектов способностей переименовывает из секунд в ходы. Старые существа/игроки не удаляются. Миграция `003` рассчитана на схему после `001` и `002` и выполняется только один раз.
 
-Скопируй `.env.example` в `.env`, подставь настоящие значения. Go сам не загружает `.env`, поэтому экспортируй переменные в окружение процесса или используй свой менеджер секретов/systemd `EnvironmentFile`.
+## Запуск backend
 
-- `BOT_TOKEN` — секретный токен BotFather;
-- `DATABASE_URL` — DSN PostgreSQL;
-- `WEBAPP_URL` — публичный HTTPS URL Mini App. Для локальной разработки укажи адрес фронтенда или оставь пустым до настройки веб-интерфейса;
-- `ADMIN_TELEGRAM_IDS` — список числовых Telegram ID администраторов через запятую;
-- `PORT` — HTTP-порт, по умолчанию `8080`.
+Передай переменные окружения (Go автоматически не загружает `.env`):
 
-Не коммить `.env` и не отправляй `BOT_TOKEN` во фронтенд.
+```env
+BOT_TOKEN=...
+DATABASE_URL=postgres://USER:PASSWORD@localhost:5432/DB_NAME?sslmode=disable
+WEBAPP_URL=https://game.example.ru
+ADMIN_TELEGRAM_IDS=123456789
+PORT=8080
+UPLOAD_DIR=/absolute/path/to/inomecops/uploads
+```
 
-## 4. Запуск
-
-Из каталога `backend`:
+Создай `UPLOAD_DIR` и дай пользователю процесса Go право записи. Затем из каталога с `go.mod`:
 
 ```bash
 go mod tidy
@@ -56,120 +67,88 @@ go test ./...
 go run ./cmd/server
 ```
 
-Проверка состояния:
+Для production запускай через systemd и настрой HTTPS reverse proxy. Nginx должен передавать `/api/`, `/healthz`, `/readyz` и `/uploads/` на Go backend. Храни `.env`/секреты вне Git.
 
-```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
-```
-
-`/healthz` проверяет, что HTTP-процесс работает; `/readyz` дополнительно проверяет соединение с PostgreSQL.
-
-## 5. API
-
-Все `/api/v1/...` требуют заголовка, полученного из Telegram Mini App:
-
-```http
-Authorization: tma <значение Telegram.WebApp.initData>
-```
-
-Нельзя брать пользователя из `initDataUnsafe` и отправлять его ID как доказательство личности: сервер проверяет исходный `initData` по HMAC с `BOT_TOKEN`.
-
-### Профиль
-
-`GET /api/v1/me`
-
-Пример ответа:
-
-```json
-{
-  "telegram_id": 123456789,
-  "username": "example",
-  "first_name": "Alex",
-  "gold": 0,
-  "created_at": "2026-01-01T10:00:00Z"
-}
-```
-
-### Коллекция существ
-
-`GET /api/v1/me/creatures`
-
-Возвращает существ, полученных игроком-ино-мекопов, в поле `items`.
-
-### Активировать код
-
-`POST /api/v1/codes/redeem`
-
-```json
-{"code":"INOME-..."}
-```
-
-Примеры шаблонов: `gold50` = 50 золота, `gold500` = 500 золота, `mecop150` = 150 золота и `ino-sprout`.
-
-### Создать партию (администратор)
-
-`POST /api/v1/admin/code-batches`
-
-```json
-{
-  "label": "Школьная партия №1",
-  "count": 20,
-  "reward_preset": "gold50",
-  "expires_in_days": 7
-}
-```
-
-`count`: 1–500. `expires_in_days`: 0 означает без срока действия, 1–365 задаёт срок. Ответ содержит исходные коды, чтобы их можно было сохранить в CSV. В базе остаются только хеши кодов: восстановить исходный код после потери ответа нельзя. Сохрани экспорт сразу после генерации.
-
-### История партий (администратор)
-
-`GET /api/v1/admin/code-batches?limit=50&offset=0`
-
-### Отозвать партию (администратор)
-
-`POST /api/v1/admin/code-batches/{id}/revoke`
-
-После отзыва коды партии нельзя активировать; уже выданные награды не отзываются.
-
-## 5.1 Frontend Mini App
+## Запуск frontend
 
 ```bash
 cd frontend
 npm install
+npm run build
 npm run dev
 ```
 
-Для локального preview без Telegram и backend создай `frontend/.env.local` с `VITE_DEMO_MODE=true`. Не разворачивай демо-режим в production. Полная инструкция — в `frontend/README.md`.
+Vite проксирует `/api`, `/healthz`, `/readyz` и `/uploads` на `http://localhost:8080`.
 
-Frontend dev server работает на `http://localhost:5173` и проксирует `/api`, `/healthz` и `/readyz` на Go API `http://localhost:8080`. В production раздавай `frontend/dist` через HTTPS и проксируй `/api/` к Go backend на том же домене.
+Для локального просмотра интерфейса без Telegram создай `frontend/.env.local`:
 
-## 5.2 QR-карточки и автоматическая активация
-
-В `frontend/.env.local` задай `VITE_TELEGRAM_BOT_USERNAME=your_bot_username` без `@`. В `@BotFather` настрой Main Mini App и укажи публичный HTTPS URL. Ссылка `https://t.me/<bot_username>?startapp=<CODE>` передаёт одноразовый код в Mini App; фронтенд автоматически отправляет его на `/api/v1/codes/redeem`.
-
-После создания партии администратор может нажать **QR-карточки**, распечатать лист или сохранить его как PDF. CSV также содержит Telegram-ссылку для каждой карточки. Не распространяй CSV с неиспользованными кодами: код в QR может быть активирован любым человеком, получившим ссылку первым. В демо-режиме печать отключена.
-
-## 6. Структура
-
-```text
-cmd/server/main.go
-internal/config/
-internal/features/auth/
-internal/features/codes/
-internal/features/admin_panel/
-internal/router/
-internal/services/
-internal/telegram/
-migrations/001_init.sql
+```env
+VITE_DEMO_MODE=true
+VITE_TELEGRAM_BOT_USERNAME=your_bot_username
 ```
 
-Это монолит: функции разделены по фичам, но приложение запускается одним процессом.
+Демо-режим использует фиктивные данные в браузере; не включай его в production. Для настоящего Mini App требуется публичный HTTPS URL, настроенный у бота, и оригинальный `Telegram.WebApp.initData`.
 
-## 7. Важные ограничения перед реальным запуском
+## Пассивный доход
 
-- В MVP намеренно нет казино, дуэлей и пассивного дохода. Frontend пока реализует профиль, коллекцию, активацию кодов и управление партиями.
-- Админка защищена allowlist-ом Telegram ID и проверенной подписью Mini App, а не скрытой кнопкой.
-- Для школьного проекта не связывай игровые бонусы и призы с поддержкой конкретного кандидата или выбором ученика.
-- Перед публичным запуском добавь rate limiting, аудит действий администраторов, резервное копирование БД, метрики и тесты интеграции с настоящим PostgreSQL.
-- Никогда не логируй `Authorization` или исходный `initData`.
+`GET /api/v1/game/overview` под блокировкой строки игрока вычисляет доход с момента предыдущего начисления, добавляет целые монеты к `players.gold`, сохраняет дробный остаток и записывает операцию в `wallet_transactions` с типом `passive_income`. Приход рассчитывается за время владения каждым конкретным экземпляром иномекона, поэтому новый иномекон не выдаёт доход задним числом. Игрок должен открыть Mini App или обновлять профиль: отдельный фоновой worker для автономного начисления пока не нужен.
+
+## Правила дуэли
+
+1. Игрок отправляет вызов другому игроку, выбирая свой экземпляр иномекона и экземпляр соперника.
+2. Соперник принимает или отклоняет приглашение. Первый ход получает вызывающий игрок.
+3. Участники ходят по очереди, выбирая обычную атаку или способность.
+4. Backend сам определяет попадание, критический удар, урон, эффекты, их длительность и перезарядку. HP, ход и журнал сохраняются в `game_battles`.
+5. В MVP у игрока может быть только одна активная дуэль; приглашение ожидает реакции соперника. Уведомление через Telegram push пока не отправляется — игра обновляет список дуэлей при открытии/обновлении и периодически опрашивает API.
+
+Основные правила боя:
+- обычная атака использует базовый урон;
+- способность добавляет `power` к базовому урону и использует `accuracy_percent`;
+- критический удар увеличивает урон в 1.5 раза;
+- `burn` наносит урон в начале хода существа, `stun` пропускает его ход;
+- `slow` и `weaken` уменьшают исходящий урон; `shield` уменьшает входящий урон;
+- перезарядка способности измеряется реальным временем в секундах; длительность боевых эффектов — в ходах;
+- характеристики существ фиксируются в снимке при создании вызова и не меняются задним числом во время дуэли.
+
+## API игрового процесса
+
+Все endpoints требуют авторизацию Telegram Mini App.
+
+| Метод | Endpoint | Назначение |
+|---|---|---|
+| `GET` | `/api/v1/game/overview` | Профиль, баланс и начисление пассивного дохода |
+| `GET` | `/api/v1/game/players` | Список соперников с иномеконами |
+| `GET` | `/api/v1/game/battles` | Дуэли текущего игрока |
+| `POST` | `/api/v1/game/battles` | Отправить вызов (`my_creature_id`, `opponent_creature_id`) |
+| `POST` | `/api/v1/game/battles/{id}/accept` | Принять вызов |
+| `POST` | `/api/v1/game/battles/{id}/decline` | Отклонить вызов |
+| `POST` | `/api/v1/game/battles/{id}/cancel` | Отменить свой ожидающий вызов |
+| `POST` | `/api/v1/game/battles/{id}/turn` | Сделать ход (`{"action":"basic"}` или `{"action":"ability"}`) |
+
+## API каталога
+
+Административные запросы требуют проверенную Telegram Mini App авторизацию и ID из `ADMIN_TELEGRAM_IDS`.
+
+| Метод | Endpoint | Назначение |
+|---|---|---|
+| `GET` | `/api/v1/admin/abilities` | Список способностей |
+| `POST` | `/api/v1/admin/abilities` | Создать способность |
+| `PUT` | `/api/v1/admin/abilities/{id}` | Обновить способность |
+| `DELETE` | `/api/v1/admin/abilities/{id}` | Удалить свою способность, если она не назначена существам |
+| `GET` | `/api/v1/admin/creatures` | Каталог видов, включая архивные |
+| `POST` | `/api/v1/admin/creatures` | Создать вид |
+| `PUT` | `/api/v1/admin/creatures/{id}` | Обновить характеристики вида |
+| `DELETE` | `/api/v1/admin/creatures/{id}` | Архивировать вид без потери истории |
+| `POST` | `/api/v1/admin/uploads/images` | Загрузить изображение, multipart field `image` |
+| `GET` | `/api/v1/catalog/creatures` | Активные виды для игры |
+
+Виды редкости: `common`, `rare`, `epic`, `legendary`, `mythic`. Стихии: `meteor`, `wind`, `earth`, `water`, `arcane`, `custom`. Эффекты: `none`, `burn`, `slow`, `stun`, `weaken`, `shield`.
+
+## Проверки перед публикацией
+
+```bash
+go test ./...
+cd frontend && npm run build
+```
+
+Реальную механику обязательно протестируй на двух отдельных Telegram-аккаунтах: отправка вызова, принятие, ход каждого игрока, запрет хода не по очереди, перезарядка, победа и пассивное начисление при повторном открытии профиля.

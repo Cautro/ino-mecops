@@ -14,7 +14,9 @@ import (
 	"github.com/cautro/inomecops/backend/internal/config"
 	"github.com/cautro/inomecops/backend/internal/features/admin_panel"
 	"github.com/cautro/inomecops/backend/internal/features/auth"
+	"github.com/cautro/inomecops/backend/internal/features/catalog"
 	"github.com/cautro/inomecops/backend/internal/features/codes"
+	"github.com/cautro/inomecops/backend/internal/features/gameplay"
 	"github.com/cautro/inomecops/backend/internal/router"
 	"github.com/cautro/inomecops/backend/internal/telegram"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -56,13 +58,20 @@ func main() {
 	adminRepo := admin_panel.NewPostgresRepository(db)
 	adminUseCase := admin_panel.NewUseCase(adminRepo)
 	adminHandler := admin_panel.NewHandler(adminUseCase, cfg.AdminIDs)
+	catalogRepo := catalog.NewPostgresRepository(db)
+	catalogUseCase := catalog.NewUseCase(catalogRepo)
+	catalogHandler := catalog.NewHandler(catalogUseCase, cfg.AdminIDs, cfg.UploadDir)
+	gameplayHandler := gameplay.NewHandler(db)
 
 	handler := router.New(router.Dependencies{
-		Auth:  authHandler,
-		Codes: codesHandler,
-		Admin: adminHandler,
-		DB:    db,
-		Log:   logger,
+		Auth:      authHandler,
+		Codes:     codesHandler,
+		Admin:     adminHandler,
+		Catalog:   catalogHandler,
+		Gameplay:  gameplayHandler,
+		UploadDir: cfg.UploadDir,
+		DB:        db,
+		Log:       logger,
 	})
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
