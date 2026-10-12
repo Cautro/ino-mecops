@@ -72,6 +72,12 @@ export type CreatedBatch = {
   codes: string[];
 };
 
+export type BatchCodesResponse = {
+  batch_id: number;
+  codes: { code: string; redeemed_at?: string }[];
+  unavailable_count: number;
+};
+
 export type CreateBatchInput = {
   label: string;
   count: number;
@@ -229,10 +235,13 @@ export const api = {
   declineBattle: (initData: string, id: number) => request<{ ok: boolean; id: number }>(`/api/v1/game/battles/${id}/decline`, initData, { method: 'POST', body: {} }),
   cancelBattle: (initData: string, id: number) => request<{ ok: boolean; id: number }>(`/api/v1/game/battles/${id}/cancel`, initData, { method: 'POST', body: {} }),
   battleTurn: (initData: string, id: number, action: 'basic' | 'ability') => request<GameTurnResult>(`/api/v1/game/battles/${id}/turn`, initData, { method: 'POST', body: { action } }),
+  surrenderBattle: (initData: string, id: number) => request<GameBattle>(`/api/v1/game/battles/${id}/surrender`, initData, { method: 'POST', body: {} }),
   redeem: (initData: string, code: string) => request<RedeemResult>('/api/v1/codes/redeem', initData, { method: 'POST', body: { code } }),
   listBatches: (initData: string) => request<{ items: Batch[] }>('/api/v1/admin/code-batches?limit=50&offset=0', initData),
   createBatch: (initData: string, payload: CreateBatchInput) => request<CreatedBatch>('/api/v1/admin/code-batches', initData, { method: 'POST', body: payload }),
+  batchCodes: (initData: string, id: number) => request<BatchCodesResponse>(`/api/v1/admin/code-batches/${id}/codes`, initData),
   revokeBatch: (initData: string, id: number) => request<{ ok: boolean; batch_id: number }>(`/api/v1/admin/code-batches/${id}/revoke`, initData, { method: 'POST', body: {} }),
+  deleteBatch: (initData: string, id: number) => request<{ ok: boolean; batch_id: number }>(`/api/v1/admin/code-batches/${id}`, initData, { method: 'DELETE' }),
   listAbilities: (initData: string) => request<{ items: Ability[] }>('/api/v1/admin/abilities', initData),
   createAbility: (initData: string, payload: AbilityInput) => request<Ability>('/api/v1/admin/abilities', initData, { method: 'POST', body: payload }),
   updateAbility: (initData: string, id: number, payload: AbilityUpdateInput) => request<Ability>(`/api/v1/admin/abilities/${id}`, initData, { method: 'PUT', body: payload }),
@@ -321,8 +330,16 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     demoBatches = [batch, ...demoBatches];
     return { batch_id: batch.id, label: batch.label, count: payload.count, reward_gold: rewardGold, reward_creature_slug: creature, expires_at: batch.expires_at, codes } as T;
   }
+  const batchCodesMatch = path.match(/^\/api\/v1\/admin\/code-batches\/(\d+)\/codes$/);
+  if (batchCodesMatch) {
+    const batch = demoBatches.find((item) => item.id === Number(batchCodesMatch[1]));
+    if (!batch) throw new APIError('Партия не найдена.', 404);
+    return { batch_id: batch.id, codes: Array.from({ length: batch.code_count }, (_, index) => ({ code: `INOME-DEMO-${batch.id}-${String(index + 1).padStart(3, '0')}` })), unavailable_count: 0 } as T;
+  }
   const revokeBatchMatch = path.match(/^\/api\/v1\/admin\/code-batches\/(\d+)\/revoke$/);
   if (revokeBatchMatch) { const batch = demoBatches.find((item) => item.id === Number(revokeBatchMatch[1])); if (!batch || batch.revoked_at) throw new APIError('Партия не найдена или уже отозвана.', 404); batch.revoked_at = new Date().toISOString(); return { ok: true, batch_id: batch.id } as T; }
+  const deleteBatchMatch = path.match(/^\/api\/v1\/admin\/code-batches\/(\d+)$/);
+  if (deleteBatchMatch && options.method === 'DELETE') { const id = Number(deleteBatchMatch[1]); const batch = demoBatches.find((item) => item.id === id); if (!batch) throw new APIError('Партия не найдена.', 404); if (batch.redeemed_count) throw new APIError('Нельзя удалить партию с активированными кодами.', 409); demoBatches = demoBatches.filter((item) => item.id !== id); return { ok: true, batch_id: id } as T; }
   if (path === '/api/v1/admin/abilities') {
     if (options.method === 'POST') {
       const input = options.body as AbilityInput;

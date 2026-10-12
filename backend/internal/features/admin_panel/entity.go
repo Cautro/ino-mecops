@@ -21,6 +21,18 @@ type NewBatch struct {
 	CreatedBy          int64
 	ExpiresAt          *time.Time
 	CodeHashes         [][]byte
+	CodeValues         []string
+}
+
+type BatchCode struct {
+	Code       string     `json:"code,omitempty"`
+	RedeemedAt *time.Time `json:"redeemed_at,omitempty"`
+}
+
+type BatchCodesResponse struct {
+	BatchID          int64       `json:"batch_id"`
+	Codes            []BatchCode `json:"codes"`
+	UnavailableCount int         `json:"unavailable_count"`
 }
 
 type BatchSummary struct {

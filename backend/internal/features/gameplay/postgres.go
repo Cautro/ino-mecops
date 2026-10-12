@@ -495,6 +495,47 @@ func (s *Store) takeTurn(ctx context.Context, me, id int64, action string) (Turn
 	return TurnResult{Battle: fresh, Message: message}, nil
 }
 
+func (s *Store) surrender(ctx context.Context, me, id int64) (Battle, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Battle{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	b, err := scanBattle(tx.QueryRowContext(ctx, battleSelect+` WHERE b.id=$1 FOR UPDATE OF b`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Battle{}, ErrNotFound
+	}
+	if err != nil {
+		return Battle{}, err
+	}
+	if b.Status != "active" {
+		return Battle{}, ErrBattleClosed
+	}
+	if me != b.ChallengerTelegramID && me != b.OpponentTelegramID {
+		return Battle{}, ErrForbidden
+	}
+	winner := b.ChallengerTelegramID
+	winnerName := b.ChallengerCreature.Name
+	if me == winner {
+		winner = b.OpponentTelegramID
+		winnerName = b.OpponentCreature.Name
+	}
+	now := time.Now().UTC()
+	b.State.CurrentTurnTelegramID = 0
+	b.State.Log = append(b.State.Log, BattleLog{At: now, Type: "finish", Message: fmt.Sprintf("%s сдаётся. Победа: %s.", map[bool]string{true: b.ChallengerCreature.Name, false: b.OpponentCreature.Name}[me == b.ChallengerTelegramID], winnerName)})
+	state, err := json.Marshal(b.State)
+	if err != nil {
+		return Battle{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE game_battles SET status='finished',current_turn_telegram_id=NULL,winner_telegram_id=$2,combat_state=$3::jsonb,updated_at=$4,finished_at=$4 WHERE id=$1`, id, winner, string(state), now); err != nil {
+		return Battle{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Battle{}, err
+	}
+	return s.getBattle(ctx, id, 0)
+}
+
 func effectLabel(kind string) string {
 	switch kind {
 	case "burn":

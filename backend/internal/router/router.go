@@ -53,11 +53,14 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("POST /api/v1/game/battles/{id}/decline", protected(http.HandlerFunc(deps.Gameplay.DeclineBattle)))
 	mux.Handle("POST /api/v1/game/battles/{id}/cancel", protected(http.HandlerFunc(deps.Gameplay.CancelBattle)))
 	mux.Handle("POST /api/v1/game/battles/{id}/turn", protected(http.HandlerFunc(deps.Gameplay.Turn)))
+	mux.Handle("POST /api/v1/game/battles/{id}/surrender", protected(http.HandlerFunc(deps.Gameplay.Surrender)))
 	mux.Handle("GET /api/v1/me/creatures", protected(http.HandlerFunc(deps.Codes.ListCreatures)))
 	mux.Handle("POST /api/v1/codes/redeem", protected(http.HandlerFunc(deps.Codes.Redeem)))
 	mux.Handle("GET /api/v1/admin/code-batches", protected(http.HandlerFunc(deps.Admin.ListBatches)))
 	mux.Handle("POST /api/v1/admin/code-batches", protected(http.HandlerFunc(deps.Admin.CreateBatch)))
+	mux.Handle("GET /api/v1/admin/code-batches/{id}/codes", protected(http.HandlerFunc(deps.Admin.ListBatchCodes)))
 	mux.Handle("POST /api/v1/admin/code-batches/{id}/revoke", protected(http.HandlerFunc(deps.Admin.RevokeBatch)))
+	mux.Handle("DELETE /api/v1/admin/code-batches/{id}", protected(http.HandlerFunc(deps.Admin.DeleteBatch)))
 
 	// Admin catalog: species and their abilities. All mutations are checked against ADMIN_TELEGRAM_IDS.
 	mux.Handle("GET /api/v1/admin/abilities", protected(http.HandlerFunc(deps.Catalog.ListAbilities)))

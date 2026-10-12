@@ -65,7 +65,7 @@ func (u *UseCase) CreateBatch(ctx context.Context, createdBy int64, req CreateBa
 
 	batchID, err := u.repo.CreateBatch(ctx, NewBatch{
 		Label: req.Label, RewardGold: reward.Gold, RewardCreatureSlug: reward.CreatureSlug,
-		CreatedBy: createdBy, ExpiresAt: expiresAt, CodeHashes: hashes,
+		CreatedBy: createdBy, ExpiresAt: expiresAt, CodeHashes: hashes, CodeValues: rawCodes,
 	})
 	if err != nil {
 		return CreateBatchResponse{}, err
@@ -75,6 +75,25 @@ func (u *UseCase) CreateBatch(ctx context.Context, createdBy int64, req CreateBa
 		RewardGold: reward.Gold, RewardCreatureSlug: reward.CreatureSlug,
 		ExpiresAt: expiresAt, Codes: rawCodes,
 	}, nil
+}
+
+func (u *UseCase) ListBatchCodes(ctx context.Context, batchID int64) (BatchCodesResponse, error) {
+	if batchID <= 0 {
+		return BatchCodesResponse{}, ErrBatchNotFound
+	}
+	codes, err := u.repo.ListBatchCodes(ctx, batchID)
+	if err != nil {
+		return BatchCodesResponse{}, err
+	}
+	result := BatchCodesResponse{BatchID: batchID, Codes: make([]BatchCode, 0, len(codes))}
+	for _, code := range codes {
+		if code.Code == "" {
+			result.UnavailableCount++
+			continue
+		}
+		result.Codes = append(result.Codes, code)
+	}
+	return result, nil
 }
 
 func generateCode() (string, error) {
@@ -105,4 +124,11 @@ func (u *UseCase) RevokeBatch(ctx context.Context, id int64) error {
 		return ErrBatchNotFound
 	}
 	return u.repo.RevokeBatch(ctx, id)
+}
+
+func (u *UseCase) DeleteBatch(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrBatchNotFound
+	}
+	return u.repo.DeleteBatch(ctx, id)
 }

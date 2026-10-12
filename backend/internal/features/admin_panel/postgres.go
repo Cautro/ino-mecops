@@ -8,6 +8,7 @@ import (
 )
 
 var ErrBatchNotFound = errors.New("batch not found or already revoked")
+var ErrBatchHasRedemptions = errors.New("batch has redeemed codes")
 
 type PostgresRepository struct {
 	db *sql.DB
@@ -38,16 +39,19 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch NewBatch) (i
 		return 0, err
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO promo_codes (batch_id, code_hash) VALUES ($1, $2)`)
+	if len(batch.CodeHashes) != len(batch.CodeValues) {
+		return 0, errors.New("code hashes and values count mismatch")
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO promo_codes (batch_id, code_hash, code_value) VALUES ($1, $2, $3)`)
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
-	for _, hash := range batch.CodeHashes {
+	for index, hash := range batch.CodeHashes {
 		if len(hash) != 32 {
 			return 0, errors.New("invalid code hash length")
 		}
-		if _, err := stmt.ExecContext(ctx, id, hash); err != nil {
+		if _, err := stmt.ExecContext(ctx, id, hash, batch.CodeValues[index]); err != nil {
 			return 0, err
 		}
 	}
@@ -55,6 +59,43 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch NewBatch) (i
 		return 0, err
 	}
 	return id, nil
+}
+
+func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) ([]BatchCode, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT code_value, redeemed_at
+		FROM promo_codes
+		WHERE batch_id = $1
+		ORDER BY id
+	`, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	codes := make([]BatchCode, 0)
+	for rows.Next() {
+		var code sql.NullString
+		var redeemedAt sql.NullTime
+		if err := rows.Scan(&code, &redeemedAt); err != nil {
+			return nil, err
+		}
+		item := BatchCode{}
+		if code.Valid {
+			item.Code = code.String
+		}
+		if redeemedAt.Valid {
+			t := redeemedAt.Time
+			item.RedeemedAt = &t
+		}
+		codes = append(codes, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(codes) == 0 {
+		return nil, ErrBatchNotFound
+	}
+	return codes, nil
 }
 
 func (r *PostgresRepository) ListBatches(ctx context.Context, limit, offset int) ([]BatchSummary, error) {
@@ -120,4 +161,33 @@ func (r *PostgresRepository) RevokeBatch(ctx context.Context, id int64) error {
 		return ErrBatchNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) DeleteBatch(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var batchID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM code_batches WHERE id = $1 FOR UPDATE`, id).Scan(&batchID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrBatchNotFound
+		}
+		return err
+	}
+	var hasRedemptions bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM promo_codes WHERE batch_id = $1 AND redeemed_at IS NOT NULL)`, id).Scan(&hasRedemptions); err != nil {
+		return err
+	}
+	if hasRedemptions {
+		return ErrBatchHasRedemptions
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM promo_codes WHERE batch_id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM code_batches WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

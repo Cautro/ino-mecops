@@ -72,7 +72,9 @@ function downloadCSV(batch: CreatedBatch, botUsername: string) {
   const blob = new Blob(['\uFEFF' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `inomecops-batch-${batch.batch_id}.csv`;
-  document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+  document.body.appendChild(anchor); anchor.click(); anchor.remove();
+  // Telegram's in-app browser may begin reading the Blob after click returns.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function Help({ text }: { text: string }) {
@@ -134,7 +136,9 @@ function App() {
   const [expiresInDays, setExpiresInDays] = useState('0');
   const [creatingBatch, setCreatingBatch] = useState(false);
   const [createdBatch, setCreatedBatch] = useState<CreatedBatch | null>(null);
+  const [loadingBatchCodesID, setLoadingBatchCodesID] = useState<number | null>(null);
   const [revokingID, setRevokingID] = useState<number | null>(null);
+  const [deletingBatchID, setDeletingBatchID] = useState<number | null>(null);
   const [qrCards, setQrCards] = useState<QRCard[]>([]);
   const [generatingQR, setGeneratingQR] = useState(false);
 
@@ -194,7 +198,7 @@ function App() {
     const timer = window.setInterval(() => {
       void api.me(initData).then(setPlayer).catch(() => undefined);
       void api.gameBattles(initData).then((result) => setBattles(result.items ?? [])).catch(() => undefined);
-    }, 30_000);
+    }, 2_000);
     return () => window.clearInterval(timer);
   }, [canOpen, initData]);
 
@@ -331,6 +335,17 @@ function App() {
     finally { setGameActionID(null); }
   };
 
+  const handleSurrender = async (battle: GameBattle) => {
+    if (!window.confirm('Сдаться в этой дуэли? Победа будет засчитана сопернику.')) return;
+    setGameActionID(battle.id);
+    try {
+      await api.surrenderBattle(initData, battle.id);
+      await loadArenaData();
+      setNotice({ kind: 'info', title: 'Ты сдался', message: 'Дуэль завершена, победа засчитана сопернику.' });
+    } catch (error) { setNotice({ kind: 'error', title: 'Не удалось сдаться', message: errorMessage(error) }); }
+    finally { setGameActionID(null); }
+  };
+
   const handleCreateBatch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const count = Number(batchCount); const expiry = Number(expiresInDays);
     if (!batchLabel.trim() || !Number.isInteger(count) || count < 1 || count > 500 || !Number.isInteger(expiry) || expiry < 0 || expiry > 365) {
@@ -361,12 +376,45 @@ function App() {
     finally { setGeneratingQR(false); }
   };
 
+  const handleOpenBatchCodes = async (batch: Batch) => {
+    setLoadingBatchCodesID(batch.id);
+    try {
+      const result = await api.batchCodes(initData, batch.id);
+      setCreatedBatch({ batch_id: batch.id, label: batch.label, count: batch.code_count, reward_gold: batch.reward_gold, reward_creature_slug: batch.reward_creature_slug, expires_at: batch.expires_at, codes: result.codes.map((item) => item.code) });
+      setQrCards([]);
+      if (result.unavailable_count) {
+        setNotice({ kind: 'info', title: 'Часть кодов недоступна', message: `${result.unavailable_count} кодов были выпущены до обновления и хранились только в виде хеша — восстановить их невозможно.` });
+      }
+    } catch (error) { setNotice({ kind: 'error', title: 'Не удалось открыть коды', message: errorMessage(error) }); }
+    finally { setLoadingBatchCodesID(null); }
+  };
+
+  const handleCopyCodes = async () => {
+    if (!createdBatch?.codes.length) return;
+    try {
+      await navigator.clipboard.writeText(createdBatch.codes.join('\n'));
+      setNotice({ kind: 'success', title: 'Коды скопированы', message: `${createdBatch.codes.length} кодов помещены в буфер обмена.` });
+    } catch { setNotice({ kind: 'info', title: 'Выдели и скопируй вручную', message: 'Telegram не дал доступ к буферу обмена.' }); }
+  };
+
   const handleRevokeBatch = async (batch: Batch) => {
     if (!window.confirm(`Отозвать партию «${batch.label}»? Неактивированные коды перестанут работать.`)) return;
     setRevokingID(batch.id);
     try { await api.revokeBatch(initData, batch.id); setBatches((items) => items.map((item) => item.id === batch.id ? { ...item, revoked_at: new Date().toISOString() } : item)); setNotice({ kind: 'success', title: 'Партия отозвана', message: batch.label }); }
     catch (error) { setNotice({ kind: 'error', title: 'Не удалось отозвать партию', message: errorMessage(error) }); }
     finally { setRevokingID(null); }
+  };
+
+  const handleDeleteBatch = async (batch: Batch) => {
+    if (!window.confirm(`Удалить партию «${batch.label}»? Это возможно только пока ни один код не активирован.`)) return;
+    setDeletingBatchID(batch.id);
+    try {
+      await api.deleteBatch(initData, batch.id);
+      setBatches((items) => items.filter((item) => item.id !== batch.id));
+      if (createdBatch?.batch_id === batch.id) setCreatedBatch(null);
+      setNotice({ kind: 'success', title: 'Партия удалена', message: `${batch.label}: неиспользованные коды удалены.` });
+    } catch (error) { setNotice({ kind: 'error', title: 'Не удалось удалить партию', message: errorMessage(error) }); }
+    finally { setDeletingBatchID(null); }
   };
 
   if (!canOpen) return <div className="launch-gate"><div className="gate-card"><div className="brand-mark">И</div><p className="eyebrow">TELEGRAM MINI APP</p><h1>Иномекопы</h1><p>Открой приложение через Telegram, чтобы войти в профиль и управлять коллекцией.</p><span className="gate-note">Локальный просмотр интерфейса доступен через VITE_DEMO_MODE=true.</span></div></div>;
@@ -408,7 +456,7 @@ function App() {
         </section>}
 
         {page === 'arena' && <section className="subpage arena-page">
-          <div className="subpage-heading"><div><p className="eyebrow">СРАЖЕНИЯ И СОПЕРНИКИ</p><h1>Арена</h1><p className="page-lead">Вызывай других игроков на дуэль. Урон, критические удары и эффекты рассчитываются на сервере.</p></div><button className="button button--secondary" onClick={() => void loadArenaData()}>Обновить</button></div>
+          <div className="subpage-heading"><div><p className="eyebrow">СРАЖЕНИЯ И СОПЕРНИКИ</p><h1>Арена</h1><p className="page-lead">Состояние дуэлей обновляется автоматически. Урон, критические удары и эффекты рассчитываются на сервере.</p></div></div>
           <div className="arena-layout">
             <form className="surface editor-form challenge-form" onSubmit={handleCreateBattle}>
               <div className="section-heading"><div><span className="section-index">01</span><h2>Вызвать на дуэль</h2></div><Help text="Вызов становится активным только после принятия соперником. Во время активной дуэли оба участника ходят по очереди. У каждого игрока может быть только одна активная дуэль." /></div>
@@ -433,7 +481,7 @@ function App() {
                   <div className="battle-fighters"><div className="battle-fighter"><ImagePreview src={myCreature.image_url} name={myCreature.name}/><div><strong>{myCreature.name}</strong><small>{isChallenger ? battle.challenger_name : battle.opponent_name}</small>{battle.status === 'active' || battle.status === 'finished' ? <><div className="hp-track"><span style={{ width: `${Math.max(0, Math.min(100, (myFighter.hp / Math.max(1, myFighter.max_hp)) * 100))}%` }} /></div><small>{myFighter.hp} / {myFighter.max_hp} HP</small></> : <small>{myCreature.health} HP</small>}</div></div><div className="battle-vs">VS</div><div className="battle-fighter"><ImagePreview src={enemyCreature.image_url} name={enemyCreature.name}/><div><strong>{enemyCreature.name}</strong><small>{isChallenger ? battle.opponent_name : battle.challenger_name}</small>{battle.status === 'active' || battle.status === 'finished' ? <><div className="hp-track"><span style={{ width: `${Math.max(0, Math.min(100, (enemyFighter.hp / Math.max(1, enemyFighter.max_hp)) * 100))}%` }} /></div><small>{enemyFighter.hp} / {enemyFighter.max_hp} HP</small></> : <small>{enemyCreature.health} HP</small>}</div></div></div>
                   {incoming && <div className="battle-actions"><button className="button button--primary" disabled={gameActionID === battle.id} onClick={() => void handleBattleRequest(battle, 'accept')}>Принять вызов</button><button className="button button--secondary" disabled={gameActionID === battle.id} onClick={() => void handleBattleRequest(battle, 'decline')}>Отклонить</button></div>}
                   {outgoing && <div className="battle-actions"><span className="field-help">Ожидаем ответа соперника.</span><button className="button button--secondary" disabled={gameActionID === battle.id} onClick={() => void handleBattleRequest(battle, 'cancel')}>Отменить вызов</button></div>}
-                  {battle.status === 'active' && <><div className="battle-skill"><span><strong>{myCreature.ability.name}</strong><small>Урон способности +{myCreature.ability.power} · точность {myCreature.ability.accuracy_percent}% · эффект: {myCreature.ability.effect_type === 'none' ? 'нет' : myCreature.ability.effect_type}</small></span><span>{abilityCooling ? `Перезарядка до ${new Date(myFighter.ability_ready_at!).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Готова'}</span></div><div className="battle-actions"><button className="button button--secondary" disabled={!myTurn || gameActionID === battle.id} onClick={() => void handleBattleTurn(battle, 'basic')}>Обычная атака</button><button className="button button--primary" disabled={!myTurn || abilityCooling || gameActionID === battle.id} onClick={() => void handleBattleTurn(battle, 'ability')}>{gameActionID === battle.id ? 'Выполняется…' : 'Использовать способность'}</button></div>{!myTurn && <p className="field-help">Ожидай ход соперника. Состояние дуэли обновляется автоматически.</p>}</>}
+                  {battle.status === 'active' && <><div className="battle-skill"><span><strong>{myCreature.ability.name}</strong><small>Урон способности +{myCreature.ability.power} · точность {myCreature.ability.accuracy_percent}% · эффект: {myCreature.ability.effect_type === 'none' ? 'нет' : myCreature.ability.effect_type}</small></span><span>{abilityCooling ? `Перезарядка до ${new Date(myFighter.ability_ready_at!).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Готова'}</span></div><div className="battle-actions"><button className="button button--secondary" disabled={!myTurn || gameActionID === battle.id} onClick={() => void handleBattleTurn(battle, 'basic')}>Обычная атака</button><button className="button button--primary" disabled={!myTurn || abilityCooling || gameActionID === battle.id} onClick={() => void handleBattleTurn(battle, 'ability')}>{gameActionID === battle.id ? 'Выполняется…' : 'Использовать способность'}</button><button className="button button--ghost" disabled={gameActionID === battle.id} onClick={() => void handleSurrender(battle)}>Сдаться</button></div>{!myTurn && <p className="field-help">Ожидай ход соперника. Состояние дуэли обновляется автоматически.</p>}</>}
                   {battle.status === 'finished' && <p className="battle-finish">{battle.winner_telegram_id === meID ? 'Ты выиграл эту дуэль.' : 'В этой дуэли победил соперник.'}</p>}
                   {battle.state.log?.length > 0 && <details className="battle-log"><summary>Ход боя · {battle.state.log.length} событий</summary><ol>{battle.state.log.slice(-10).reverse().map((entry, index) => <li key={`${entry.at}-${index}`}><time>{new Date(entry.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>{entry.message}</li>)}</ol></details>}
                 </article>;
@@ -450,7 +498,7 @@ function App() {
               <div className="editor-grid"><label className="field"><FieldLabel help="Системный идентификатор на латинице, например frost-fox. После создания не меняется, поскольку на него могут ссылаться коллекции и карточки.">Slug</FieldLabel><input required minLength={2} maxLength={48} pattern="[a-z0-9]+(-[a-z0-9]+)*" disabled={Boolean(speciesEditor.id)} value={speciesEditor.values.slug} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') } })} placeholder="frost-fox" /></label>
                 <label className="field"><FieldLabel>Название</FieldLabel><input required maxLength={80} value={speciesEditor.values.name} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, name: e.target.value } })} placeholder="Ледяной лис" /></label>
                 <label className="field field--wide"><FieldLabel>Описание</FieldLabel><textarea maxLength={1000} rows={2} value={speciesEditor.values.description} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, description: e.target.value } })} placeholder="Краткое описание существа" /></label>
-                <div className="field field--wide"><FieldLabel help="Загрузи подготовленный художником или сгенерированный ИИ файл. Поддерживаются PNG, JPEG и GIF до 5 МБ; интерфейс не рисует персонажа автоматически.">Изображение</FieldLabel><div className="image-upload-row"><ImagePreview src={speciesEditor.values.image_url} name={speciesEditor.values.name || 'Иномекон'} /><div className="upload-actions"><label className="button button--secondary upload-button">{uploadingImage ? 'Загрузка…' : 'Загрузить изображение'}<input type="file" accept="image/png,image/jpeg,image/gif" onChange={handleSpeciesImage} disabled={uploadingImage} hidden /></label><label className="field"><FieldLabel>Или HTTPS-ссылка</FieldLabel><input value={speciesEditor.values.image_url.startsWith('data:') ? '' : speciesEditor.values.image_url} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, image_url: e.target.value } })} placeholder="https://… или /uploads/…" /></label></div></div></div>
+                <div className="field field--wide"><FieldLabel help="Загрузи подготовленный художником или сгенерированный ИИ файл. Поддерживаются PNG, JPEG и GIF до 5 МБ; интерфейс не рисует персонажа автоматически.">Изображение</FieldLabel><div className="image-upload-row"><ImagePreview src={speciesEditor.values.image_url} name={speciesEditor.values.name || 'Иномекон'} /><div className="upload-actions"><label className="button button--secondary upload-button">{uploadingImage ? 'Загрузка…' : 'Загрузить изображение'}<input className="upload-file-input" type="file" accept="image/png,image/jpeg,image/gif" onChange={handleSpeciesImage} disabled={uploadingImage} /></label><label className="field"><FieldLabel>Или HTTPS-ссылка</FieldLabel><input value={speciesEditor.values.image_url.startsWith('data:') ? '' : speciesEditor.values.image_url} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, image_url: e.target.value } })} placeholder="https://… или /uploads/…" /></label></div></div></div>
                 <label className="field"><FieldLabel help="Редкость определяет категорию существа. Она пока не меняет боевые характеристики автоматически.">Редкость</FieldLabel><select value={speciesEditor.values.rarity} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, rarity: e.target.value as Rarity } })}>{RARITIES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
                 <label className="field"><FieldLabel help="Количество игрового золота, начисляемого за один час владения. Само начисление по расписанию в этот этап ещё не входит.">Пассивный доход / час</FieldLabel><input type="number" min={0} max={10000000} step={1} required value={speciesEditor.values.passive_gold_per_hour} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, passive_gold_per_hour: Number(e.target.value) } })} /></label>
                 <label className="field"><FieldLabel help="Базовый запас здоровья. Боевой движок и формула боя будут следующим отдельным этапом.">Здоровье (HP)</FieldLabel><input type="number" min={1} max={1000000} step={1} required value={speciesEditor.values.health} onChange={(e) => setSpeciesEditor({ ...speciesEditor, values: { ...speciesEditor.values, health: Number(e.target.value) } })} /></label>
@@ -481,8 +529,8 @@ function App() {
 
           {adminSection === 'codes' && <section className="admin-section"><div className="section-toolbar"><div><h2>Одноразовые карточки</h2><p>Выпускай партии кодов, скачивай CSV или печатай QR-карточки.</p></div><div className="stat-inline"><span><strong>{formatNumber(batchTotals.codes)}</strong> кодов</span><span><strong>{formatNumber(batchTotals.used)}</strong> использовано</span><span><strong>{formatNumber(batchTotals.available)}</strong> доступно</span></div></div>
             <div className="codes-layout"><form className="surface editor-form" onSubmit={handleCreateBatch}><div className="editor-heading"><div><p className="eyebrow">НОВАЯ ПАРТИЯ</p><h3>Создать карточки</h3></div></div><label className="field"><FieldLabel>Название партии</FieldLabel><input required maxLength={100} value={batchLabel} onChange={(e) => setBatchLabel(e.target.value)} /></label><label className="field"><FieldLabel help="Количество уникальных одноразовых кодов в партии. Максимум 500 за один запрос.">Количество кодов</FieldLabel><input type="number" min={1} max={500} required value={batchCount} onChange={(e) => setBatchCount(e.target.value)} /></label><div className="field"><FieldLabel>Награда</FieldLabel><div className="reward-options">{(Object.keys(REWARDS) as CreateBatchInput['reward_preset'][]).map((key) => <label className={rewardPreset === key ? 'reward-option is-selected' : 'reward-option'} key={key}><input type="radio" name="reward" value={key} checked={rewardPreset === key} onChange={() => setRewardPreset(key)} /><span><strong>{REWARDS[key].label}</strong><small>{REWARDS[key].gold} золота{REWARDS[key].creature ? ' + Иноспрут' : ''}</small></span></label>)}</div></div><label className="field"><FieldLabel help="0 — код не имеет срока действия. Максимум 365 дней.">Срок действия (дней)</FieldLabel><input type="number" min={0} max={365} step={1} value={expiresInDays} onChange={(e) => setExpiresInDays(e.target.value)} /></label><button className="button button--primary button--full" disabled={creatingBatch}>{creatingBatch ? 'Создаём…' : 'Создать партию'}</button></form>
-              <div className="codes-side"><div className="surface code-result"><p className="eyebrow">ПОСЛЕДНЯЯ ПАРТИЯ</p>{createdBatch ? <><h3>{createdBatch.label}</h3><p>{createdBatch.count} одноразовых кодов · {createdBatch.reward_gold} золота{createdBatch.reward_creature_slug ? ' + Иноспрут' : ''}</p><div className="button-stack"><button className="button button--primary" onClick={() => downloadCSV(createdBatch, botUsername)}>Скачать CSV</button><button className="button button--secondary" disabled={generatingQR} onClick={() => void handlePrepareQR()}>{generatingQR ? 'Готовим QR…' : 'Подготовить QR-карточки'}</button></div></> : <div className="empty-inline"><strong>Партии пока не создавались</strong><span>После создания здесь появятся действия для экспорта.</span></div>}</div>
-                <div className="surface batch-history"><div className="section-heading"><h3>История партий</h3><button className="text-button" onClick={() => void loadAdminData()}>Обновить</button></div>{batches.length ? batches.map((batch) => <div className="batch-row" key={batch.id}><div className="batch-row-main"><strong>{batch.label}</strong><span>#{batch.id} · {formatDate(batch.created_at)} · {batch.reward_gold} золота{batch.reward_creature_slug ? ' + Иноспрут' : ''}</span><div className="batch-progress"><span style={{ width: `${batch.code_count ? Math.min(100, Math.round((batch.redeemed_count / batch.code_count) * 100)) : 0}%` }} /></div><small>{batch.redeemed_count} из {batch.code_count} активировано · {formatDate(batch.expires_at)}</small></div><div className="batch-actions"><span className={`state-tag${batch.revoked_at ? ' state-tag--muted' : ''}`}>{batch.revoked_at ? 'Отозвана' : 'Активна'}</span>{!batch.revoked_at && <button className="text-button text-button--danger" disabled={revokingID === batch.id} onClick={() => void handleRevokeBatch(batch)}>{revokingID === batch.id ? '…' : 'Отозвать'}</button>}</div></div>) : <p className="muted-copy">Список пуст.</p>}</div>
+              <div className="codes-side"><div className="surface code-result"><p className="eyebrow">КОДЫ ПАРТИИ</p>{createdBatch ? <><h3>{createdBatch.label}</h3><p>{createdBatch.codes.length} из {createdBatch.count} кодов доступны для экспорта · {createdBatch.reward_gold} золота{createdBatch.reward_creature_slug ? ' + Иноспрут' : ''}</p><textarea className="codes-preview" value={createdBatch.codes.join('\n')} readOnly aria-label="Коды партии" /><div className="button-stack"><button className="button button--primary" onClick={() => void handleCopyCodes()}>Скопировать коды</button><button className="button button--secondary" onClick={() => downloadCSV(createdBatch, botUsername)}>Скачать CSV</button><button className="button button--secondary" disabled={generatingQR || !createdBatch.codes.length} onClick={() => void handlePrepareQR()}>{generatingQR ? 'Готовим QR…' : 'Подготовить QR-карточки'}</button></div></> : <div className="empty-inline"><strong>Выбери партию из истории</strong><span>Коды сохраняются на сервере и доступны после обновления приложения.</span></div>}</div>
+                <div className="surface batch-history"><div className="section-heading"><h3>История партий</h3><button className="text-button" onClick={() => void loadAdminData()}>Обновить</button></div>{batches.length ? batches.map((batch) => <div className="batch-row" key={batch.id}><div className="batch-row-main"><strong>{batch.label}</strong><span>#{batch.id} · {formatDate(batch.created_at)} · {batch.reward_gold} золота{batch.reward_creature_slug ? ' + Иноспрут' : ''}</span><div className="batch-progress"><span style={{ width: `${batch.code_count ? Math.min(100, Math.round((batch.redeemed_count / batch.code_count) * 100)) : 0}%` }} /></div><small>{batch.redeemed_count} из {batch.code_count} активировано · {formatDate(batch.expires_at)}</small></div><div className="batch-actions"><span className={`state-tag${batch.revoked_at ? ' state-tag--muted' : ''}`}>{batch.revoked_at ? 'Отозвана' : 'Активна'}</span><button className="text-button" disabled={loadingBatchCodesID === batch.id} onClick={() => void handleOpenBatchCodes(batch)}>{loadingBatchCodesID === batch.id ? 'Открываем…' : 'Показать коды'}</button>{batch.redeemed_count === 0 ? <button className="text-button text-button--danger" disabled={deletingBatchID === batch.id} onClick={() => void handleDeleteBatch(batch)}>{deletingBatchID === batch.id ? '…' : 'Удалить'}</button> : !batch.revoked_at && <button className="text-button text-button--danger" disabled={revokingID === batch.id} onClick={() => void handleRevokeBatch(batch)}>{revokingID === batch.id ? '…' : 'Отозвать'}</button>}</div></div>) : <p className="muted-copy">Список пуст.</p>}</div>
               </div>
             </div>
           </section>}

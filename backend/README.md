@@ -36,15 +36,16 @@ frontend/                       React + TypeScript + Vite
 
 ## Миграции БД
 
-Применяй миграции по порядку, по одному разу. Если `001` и `002` уже применены, **не запускай их повторно** — выполни только `003_gameplay.sql`.
+Применяй миграции по порядку, по одному разу. Если `001`–`003` уже применены, **не запускай их повторно** — выполни только `004_retain_batch_code_values.sql`.
 
 ```bash
 sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/001_init.sql
 sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/002_creature_catalog.sql
 sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/003_gameplay.sql
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d ИМЯ_БАЗЫ -f migrations/004_retain_batch_code_values.sql
 ```
 
-`003_gameplay.sql` добавляет поля пассивного дохода и таблицу `game_battles`, а длительность эффектов способностей переименовывает из секунд в ходы. Старые существа/игроки не удаляются. Миграция `003` рассчитана на схему после `001` и `002` и выполняется только один раз.
+`003_gameplay.sql` добавляет поля пассивного дохода и таблицу `game_battles`, а длительность эффектов способностей переименовывает из секунд в ходы. `004_retain_batch_code_values.sql` позволяет повторно открыть коды партии в админке после обновления Mini App. Коды, выпущенные до `004`, восстановить нельзя: ранее в БД сохранялись только их хеши.
 
 ## Запуск backend
 
@@ -140,6 +141,8 @@ VITE_TELEGRAM_BOT_USERNAME=your_bot_username
 | `PUT` | `/api/v1/admin/creatures/{id}` | Обновить характеристики вида |
 | `DELETE` | `/api/v1/admin/creatures/{id}` | Архивировать вид без потери истории |
 | `POST` | `/api/v1/admin/uploads/images` | Загрузить изображение, multipart field `image` |
+| `GET` | `/api/v1/admin/code-batches/{id}/codes` | Открыть и повторно экспортировать коды партии |
+| `DELETE` | `/api/v1/admin/code-batches/{id}` | Удалить партию без активированных кодов |
 | `GET` | `/api/v1/catalog/creatures` | Активные виды для игры |
 
 Виды редкости: `common`, `rare`, `epic`, `legendary`, `mythic`. Стихии: `meteor`, `wind`, `earth`, `water`, `arcane`, `custom`. Эффекты: `none`, `burn`, `slow`, `stun`, `weaken`, `shield`.

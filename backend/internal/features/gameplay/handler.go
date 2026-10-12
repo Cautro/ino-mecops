@@ -128,6 +128,23 @@ func (h *Handler) Turn(w http.ResponseWriter, r *http.Request) {
 	}
 	services.WriteJSON(w, http.StatusOK, result)
 }
+func (h *Handler) Surrender(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		services.WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация.")
+		return
+	}
+	id, ok := parseBattleID(w, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	battle, err := h.store.surrender(r.Context(), user.ID, id)
+	if err != nil {
+		h.writeError(w, err)
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, battle)
+}
 func parseBattleID(w http.ResponseWriter, raw string) (int64, bool) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id < 1 {

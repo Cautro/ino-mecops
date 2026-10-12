@@ -72,6 +72,27 @@ func (h *Handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	services.WriteJSON(w, http.StatusCreated, result)
 }
 
+func (h *Handler) ListBatchCodes(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authorized(w, r); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || id <= 0 {
+		services.WriteError(w, http.StatusBadRequest, "invalid_batch_id", "Некорректный ID партии.")
+		return
+	}
+	result, err := h.useCase.ListBatchCodes(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrBatchNotFound) {
+			services.WriteError(w, http.StatusNotFound, "batch_not_found", "Партия не найдена.")
+			return
+		}
+		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось получить коды партии.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) RevokeBatch(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.authorized(w, r); !ok {
 		return
@@ -87,6 +108,30 @@ func (h *Handler) RevokeBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось отозвать партию.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "batch_id": id})
+}
+
+func (h *Handler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authorized(w, r); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || id <= 0 {
+		services.WriteError(w, http.StatusBadRequest, "invalid_batch_id", "Некорректный ID партии.")
+		return
+	}
+	if err := h.useCase.DeleteBatch(r.Context(), id); err != nil {
+		if errors.Is(err, ErrBatchNotFound) {
+			services.WriteError(w, http.StatusNotFound, "batch_not_found", "Партия не найдена.")
+			return
+		}
+		if errors.Is(err, ErrBatchHasRedemptions) {
+			services.WriteError(w, http.StatusConflict, "batch_has_redemptions", "Нельзя удалить партию с активированными кодами. Отзови её, чтобы сохранить историю наград.")
+			return
+		}
+		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось удалить партию.")
 		return
 	}
 	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "batch_id": id})
