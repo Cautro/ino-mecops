@@ -15,6 +15,8 @@ interface TelegramWebApp {
   viewportHeight: number;
   ready: () => void;
   expand: () => void;
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
   close: () => void;
   enableClosingConfirmation?: () => void;
   disableClosingConfirmation?: () => void;

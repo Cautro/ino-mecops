@@ -180,7 +180,15 @@ function App() {
     finally { setLoading(false); }
   }, [canOpen, initData, loadAdminData, loadArenaData]);
 
-  useEffect(() => { telegram?.ready(); telegram?.expand(); void loadData(); }, [telegram, loadData]);
+  useEffect(() => {
+    // Keep Telegram's native chrome on the same dark canvas as the WebView.
+    // This prevents the white strip / dark content split in some Mini App clients.
+    telegram?.setHeaderColor?.('#0e1210');
+    telegram?.setBackgroundColor?.('#0e1210');
+    telegram?.ready();
+    telegram?.expand();
+    void loadData();
+  }, [telegram, loadData]);
   useEffect(() => {
     if (!canOpen) return;
     const timer = window.setInterval(() => {
