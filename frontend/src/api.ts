@@ -53,8 +53,18 @@ export type RedeemResult = {
   redeemed_at: string;
 };
 
+export type SlotCreatureReward = {
+  slug: string;
+  name: string;
+};
+
+export type SlotSpinRequest =
+  | { bet_type: 'gold'; bet: number }
+  | { bet_type: 'creature'; creature_id: number };
+
 export type SlotSpinResult = {
   symbols: [string, string, string];
+  bet_type: 'gold' | 'creature';
   bet: number;
   payout: number;
   net: number;
@@ -63,6 +73,11 @@ export type SlotSpinResult = {
   multiplier: number;
   creature_slug?: string;
   creature_name?: string;
+  bet_creature_id?: number;
+  bet_creature_slug?: string;
+  bet_creature_name?: string;
+  creature_stake_lost?: boolean;
+  creature_rewards?: SlotCreatureReward[];
   message: string;
 };
 
@@ -190,8 +205,8 @@ async function request<T>(path: string, initData: string, options: RequestOption
 
 export const api = {
   me: (initData: string) => request<Player>('/api/v1/game/overview', initData),
-  spinSlot: (initData: string, bet: number) =>
-    request<SlotSpinResult>('/api/v1/game/slot', initData, { method: 'POST', body: { bet } }),
+  spinSlot: (initData: string, payload: SlotSpinRequest) =>
+    request<SlotSpinResult>('/api/v1/game/slot', initData, { method: 'POST', body: payload }),
   creatures: (initData: string) => request<{ items: Creature[] }>('/api/v1/me/creatures', initData),
 
   redeem: (initData: string, code: string) =>
@@ -291,33 +306,94 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   if (path === '/api/v1/me/creatures') return { items: demoCreatures } as T;
 
   if (path === '/api/v1/game/slot' && options.method === 'POST') {
-    const bet = Number((options.body as { bet?: number })?.bet);
-    if (!Number.isInteger(bet) || bet < 10 || bet > 10000) {
-      throw new APIError('Ставка должна быть от 10 до 10000 золота.', 400, 'invalid_bet');
-    }
-    if (demoGold < bet) throw new APIError('Не хватает золота для этой ставки.', 409, 'insufficient_gold');
+    const payload = (options.body ?? {}) as Partial<SlotSpinRequest> & { bet?: number };
+    const betType = payload.bet_type ?? 'gold';
     const symbols = ['🍒', '🍋', '💎', '⭐', '🧬'];
     const result = [0, 1, 2].map(() => symbols[Math.floor(Math.random() * symbols.length)]) as [string, string, string];
     let payout = 0;
     let winType: SlotSpinResult['win_type'] = 'miss';
     let multiplier = 0;
-    let creatureSlug: string | undefined;
+
     if (result[0] === result[1] && result[1] === result[2]) {
       const multipliers: Record<string, number> = { '🍒': 4, '🍋': 5, '💎': 7, '⭐': 10, '🧬': 15 };
       multiplier = multipliers[result[0]];
-      payout = bet * multiplier;
       winType = result[0] === '🧬' ? 'creature' : 'triple';
-      if (winType === 'creature') {
-        const available = demoSpecies.filter((species) => species.is_active);
-        if (available.length) {
-          creatureSlug = available[Math.floor(Math.random() * available.length)].slug;
-          demoCreatures = [...demoCreatures, { id: Date.now(), species_slug: creatureSlug, obtained_at: new Date().toISOString() }];
-        }
-      }
     } else if (result[0] === result[1] || result[0] === result[2] || result[1] === result[2]) {
-      payout = Math.floor((bet * 12) / 10);
-      multiplier = 1.2;
       winType = 'pair';
+      multiplier = 1.2;
+    }
+
+    if (betType === 'creature') {
+      const creatureID = Number((payload as { creature_id?: number }).creature_id);
+      const staked = demoCreatures.find((creature) => creature.id === creatureID);
+      if (!Number.isInteger(creatureID) || !staked) {
+        throw new APIError('Этот иномекон уже недоступен для ставки. Обнови коллекцию и выбери другого.', 409, 'creature_not_owned');
+      }
+      const stakeLost = winType === 'miss';
+      if (stakeLost) demoCreatures = demoCreatures.filter((creature) => creature.id !== creatureID);
+
+      const rewardCount = winType === 'creature' ? 2 : winType === 'triple' ? 1 : 0;
+      const available = demoSpecies.filter((species) => species.is_active);
+      const rewards: SlotCreatureReward[] = [];
+      for (let i = 0; i < rewardCount && available.length; i++) {
+        const chosen = available[Math.floor(Math.random() * available.length)];
+        rewards.push({ slug: chosen.slug, name: chosen.name });
+        demoCreatures = [...demoCreatures, { id: Date.now() + i, species_slug: chosen.slug, obtained_at: new Date().toISOString() }];
+      }
+
+      const message = winType === 'miss'
+        ? `Промах! Иномекон потерян: ${creatureNameForDemo(staked.species_slug)}.`
+        : winType === 'pair'
+          ? `Два одинаковых символа! Иномекон «${creatureNameForDemo(staked.species_slug)}» остаётся в твоей коллекции.`
+          : winType === 'creature'
+            ? rewards.length === 2
+              ? `ДЖЕКПОТ! Три 🧬 — ставка сохранена, получены два иномекона: ${rewards[0].name} и ${rewards[1].name}!`
+              : rewards.length === 1
+                ? `ДЖЕКПОТ! Три 🧬 — ставка сохранена, получен иномекон: ${rewards[0].name}!`
+                : 'ДЖЕКПОТ! Три 🧬 — ставка сохранена, но призовых иномеконов пока нет в каталоге.'
+            : rewards.length
+              ? `Три ${result[0]}! Ставка сохранена — новый иномекон: ${rewards[0].name}!`
+              : `Три ${result[0]}! Ставка сохранена, но призовых иномеконов пока нет в каталоге.`;
+
+      return {
+        symbols: result,
+        bet_type: 'creature',
+        bet: 0,
+        payout: 0,
+        net: 0,
+        gold_balance: demoGold,
+        win_type: winType,
+        multiplier,
+        bet_creature_id: creatureID,
+        bet_creature_slug: staked.species_slug,
+        bet_creature_name: creatureNameForDemo(staked.species_slug),
+        creature_stake_lost: stakeLost,
+        creature_rewards: rewards,
+        message,
+      } as T;
+    }
+
+    const bet = Number((payload as { bet?: number }).bet);
+    if (betType !== 'gold' || !Number.isInteger(bet) || bet < 10 || bet > 10000) {
+      throw new APIError('Ставка должна быть от 10 до 10000 золота.', 400, 'invalid_bet');
+    }
+    if (demoGold < bet) throw new APIError('Не хватает золота для этой ставки.', 409, 'insufficient_gold');
+
+    let creatureSlug: string | undefined;
+    let creatureName: string | undefined;
+    if (winType === 'creature') {
+      payout = bet * 15;
+      const available = demoSpecies.filter((species) => species.is_active);
+      if (available.length) {
+        const picked = available[Math.floor(Math.random() * available.length)];
+        creatureSlug = picked.slug;
+        creatureName = picked.name;
+        demoCreatures = [...demoCreatures, { id: Date.now(), species_slug: creatureSlug, obtained_at: new Date().toISOString() }];
+      }
+    } else if (winType === 'triple') {
+      payout = bet * multiplier;
+    } else if (winType === 'pair') {
+      payout = Math.floor((bet * 12) / 10);
     }
     demoGold = demoGold - bet + payout;
     const message = winType === 'miss'
@@ -326,11 +402,12 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
         ? 'Два одинаковых символа! Выплата ×1,2.'
         : winType === 'creature'
           ? creatureSlug
-            ? `ДЖЕКПОТ! Три 🧬 — выплата ×15 и новый иномекон: ${creatureNameForDemo(creatureSlug)}!`
+            ? `ДЖЕКПОТ! Три 🧬 — выплата ×15 и новый иномекон: ${creatureName}!`
             : 'ДЖЕКПОТ! Три 🧬 — выплата ×15. В каталоге пока нет доступных иномеконов для награды.'
           : `Три ${result[0]}! Выплата ×${multiplier}.`;
     return {
       symbols: result,
+      bet_type: 'gold',
       bet,
       payout,
       net: payout - bet,
@@ -338,7 +415,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       win_type: winType,
       multiplier,
       creature_slug: creatureSlug,
-      creature_name: creatureSlug ? creatureNameForDemo(creatureSlug) : undefined,
+      creature_name: creatureName,
       message,
     } as T;
   }

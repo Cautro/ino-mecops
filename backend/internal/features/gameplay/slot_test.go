@@ -38,3 +38,25 @@ func TestEvaluateSlotMissPaysNothing(t *testing.T) {
 		t.Fatalf("unexpected miss outcome: %+v", got)
 	}
 }
+
+func TestCreatureStakeOutcomeRules(t *testing.T) {
+	cases := []struct {
+		name        string
+		winType     string
+		loseStake   bool
+		rewardCount int
+	}{
+		{name: "miss loses selected creature", winType: "miss", loseStake: true, rewardCount: 0},
+		{name: "pair preserves selected creature", winType: "pair", loseStake: false, rewardCount: 0},
+		{name: "regular triple awards one creature", winType: "triple", loseStake: false, rewardCount: 1},
+		{name: "DNA jackpot awards two creatures", winType: "creature", loseStake: false, rewardCount: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			loseStake, rewardCount := creatureStakeRewards(tc.winType)
+			if loseStake != tc.loseStake || rewardCount != tc.rewardCount {
+				t.Fatalf("creatureStakeRewards(%q) = (%t, %d); want (%t, %d)", tc.winType, loseStake, rewardCount, tc.loseStake, tc.rewardCount)
+			}
+		})
+	}
+}

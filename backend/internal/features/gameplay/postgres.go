@@ -11,6 +11,7 @@ var (
 	ErrInvalidInput     = errors.New("invalid input")
 	ErrNotFound         = errors.New("not found")
 	ErrInsufficientGold = errors.New("insufficient gold")
+	ErrCreatureNotOwned = errors.New("creature is not owned by player")
 )
 
 type Store struct{ db *sql.DB }

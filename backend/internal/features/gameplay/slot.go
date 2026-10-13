@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -29,6 +30,11 @@ type slotOutcome struct {
 	winType    string
 	multiplier float64
 	creature   bool
+}
+
+type creatureOption struct {
+	slug string
+	name string
 }
 
 func rollSlotSymbols() ([3]string, error) {
@@ -59,7 +65,40 @@ func evaluateSlot(symbols [3]string, bet int64) slotOutcome {
 	return slotOutcome{winType: "miss"}
 }
 
-func (s *Store) SpinSlot(ctx context.Context, telegramID, bet int64) (SlotSpinResult, error) {
+// Creature-stake rules are intentionally item-based: a miss loses the selected
+// creature, a pair preserves it, a regular triple awards one creature, and a
+// DNA jackpot awards two. Gold is never changed in this mode.
+func creatureStakeRewards(winType string) (loseStake bool, rewardCount int) {
+	switch winType {
+	case "miss":
+		return true, 0
+	case "pair":
+		return false, 0
+	case "creature":
+		return false, 2
+	case "triple":
+		return false, 1
+	default:
+		return false, 0
+	}
+}
+
+func (s *Store) SpinSlot(ctx context.Context, telegramID int64, input SlotSpinInput) (SlotSpinResult, error) {
+	betType := strings.TrimSpace(input.BetType)
+	if betType == "" {
+		betType = "gold" // Backward compatibility with clients that only send {bet}.
+	}
+	switch betType {
+	case "gold":
+		return s.spinGold(ctx, telegramID, input.Bet)
+	case "creature":
+		return s.spinCreature(ctx, telegramID, input.CreatureID)
+	default:
+		return SlotSpinResult{}, ErrInvalidInput
+	}
+}
+
+func (s *Store) spinGold(ctx context.Context, telegramID, bet int64) (SlotSpinResult, error) {
 	if bet < minSlotBet || bet > maxSlotBet {
 		return SlotSpinResult{}, ErrInvalidInput
 	}
@@ -81,7 +120,7 @@ func (s *Store) SpinSlot(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 		return SlotSpinResult{}, ErrInsufficientGold
 	}
 
-	// The backend owns both randomness and payout calculation; the client only supplies the stake.
+	// The backend owns randomness and payout calculation; the client only supplies the stake.
 	symbols, err := rollSlotSymbols()
 	if err != nil {
 		return SlotSpinResult{}, err
@@ -91,34 +130,16 @@ func (s *Store) SpinSlot(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 	creatureSlug := ""
 	creatureName := ""
 	if outcome.creature {
-		rows, err := tx.QueryContext(ctx, `SELECT slug, name FROM creature_species WHERE is_active=true ORDER BY id`)
+		available, err := activeCreatureOptions(ctx, tx)
 		if err != nil {
 			return SlotSpinResult{}, err
 		}
-		type creatureOption struct{ slug, name string }
-		available := make([]creatureOption, 0)
-		for rows.Next() {
-			var creature creatureOption
-			if err := rows.Scan(&creature.slug, &creature.name); err != nil {
-				rows.Close()
-				return SlotSpinResult{}, err
-			}
-			available = append(available, creature)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return SlotSpinResult{}, err
-		}
-		if err := rows.Close(); err != nil {
-			return SlotSpinResult{}, err
-		}
 		if len(available) > 0 {
-			pick, err := crand.Int(crand.Reader, big.NewInt(int64(len(available))))
+			picked, err := randomCreature(available)
 			if err != nil {
 				return SlotSpinResult{}, err
 			}
-			creatureSlug = available[pick.Int64()].slug
-			creatureName = available[pick.Int64()].name
+			creatureSlug, creatureName = picked.slug, picked.name
 		}
 	}
 
@@ -158,7 +179,7 @@ func (s *Store) SpinSlot(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO slot_spins (player_telegram_id, bet_amount, payout_amount, symbols, reward_creature_slug) VALUES ($1,$2,$3,$4,$5)`, telegramID, bet, outcome.payout, strings.Join(symbols[:], "|"), nullIfEmpty(creatureSlug)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO slot_spins (player_telegram_id, bet_amount, payout_amount, symbols, reward_creature_slug, bet_type) VALUES ($1,$2,$3,$4,$5,'gold')`, telegramID, bet, outcome.payout, strings.Join(symbols[:], "|"), nullIfEmpty(creatureSlug)); err != nil {
 		return SlotSpinResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -167,6 +188,7 @@ func (s *Store) SpinSlot(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 
 	return SlotSpinResult{
 		Symbols:      symbols,
+		BetType:      "gold",
 		Bet:          bet,
 		Payout:       outcome.payout,
 		Net:          outcome.payout - bet,
@@ -177,6 +199,159 @@ func (s *Store) SpinSlot(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 		CreatureName: creatureName,
 		Message:      message,
 	}, nil
+}
+
+func (s *Store) spinCreature(ctx context.Context, telegramID, creatureID int64) (SlotSpinResult, error) {
+	if creatureID <= 0 {
+		return SlotSpinResult{}, ErrInvalidInput
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return SlotSpinResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var balance int64
+	if err := tx.QueryRowContext(ctx, `SELECT gold FROM players WHERE telegram_id=$1 FOR UPDATE`, telegramID).Scan(&balance); err != nil {
+		if err == sql.ErrNoRows {
+			return SlotSpinResult{}, ErrNotFound
+		}
+		return SlotSpinResult{}, err
+	}
+
+	var stakedSlug, stakedName string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT pc.species_slug, COALESCE(cs.name, pc.species_slug)
+		FROM player_creatures pc
+		LEFT JOIN creature_species cs ON cs.slug = pc.species_slug
+		WHERE pc.id=$1 AND pc.owner_telegram_id=$2
+		FOR UPDATE OF pc
+	`, creatureID, telegramID).Scan(&stakedSlug, &stakedName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SlotSpinResult{}, ErrCreatureNotOwned
+		}
+		return SlotSpinResult{}, err
+	}
+
+	symbols, err := rollSlotSymbols()
+	if err != nil {
+		return SlotSpinResult{}, err
+	}
+	outcome := evaluateSlot(symbols, 1)
+	stakeLost, rewardCount := creatureStakeRewards(outcome.winType)
+	rewards := make([]SlotCreatureReward, 0, rewardCount)
+
+	if stakeLost {
+		res, err := tx.ExecContext(ctx, `DELETE FROM player_creatures WHERE id=$1 AND owner_telegram_id=$2`, creatureID, telegramID)
+		if err != nil {
+			return SlotSpinResult{}, err
+		}
+		if changed, err := res.RowsAffected(); err != nil {
+			return SlotSpinResult{}, err
+		} else if changed != 1 {
+			return SlotSpinResult{}, ErrCreatureNotOwned
+		}
+	}
+
+	if rewardCount > 0 {
+		available, err := activeCreatureOptions(ctx, tx)
+		if err != nil {
+			return SlotSpinResult{}, err
+		}
+		for i := 0; i < rewardCount && len(available) > 0; i++ {
+			picked, err := randomCreature(available)
+			if err != nil {
+				return SlotSpinResult{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO player_creatures (owner_telegram_id, species_slug) VALUES ($1,$2)`, telegramID, picked.slug); err != nil {
+				return SlotSpinResult{}, err
+			}
+			rewards = append(rewards, SlotCreatureReward{Slug: picked.slug, Name: picked.name})
+		}
+	}
+
+	message := "Мимо! Иномекон потерян: " + stakedName + "."
+	switch outcome.winType {
+	case "pair":
+		message = "Два одинаковых символа! Иномекон «" + stakedName + "» остаётся в твоей коллекции."
+	case "triple":
+		if len(rewards) == 1 {
+			message = fmt.Sprintf("Три %s! Ставка сохранена — новый иномекон: %s!", symbols[0], rewards[0].Name)
+		} else {
+			message = fmt.Sprintf("Три %s! Ставка сохранена, но в каталоге нет иномеконов для награды.", symbols[0])
+		}
+	case "creature":
+		if len(rewards) == 2 {
+			message = fmt.Sprintf("ДЖЕКПОТ! Три 🧬 — ставка сохранена, получены два иномекона: %s и %s!", rewards[0].Name, rewards[1].Name)
+		} else if len(rewards) == 1 {
+			message = fmt.Sprintf("ДЖЕКПОТ! Три 🧬 — ставка сохранена, получен иномекон: %s!", rewards[0].Name)
+		} else {
+			message = "ДЖЕКПОТ! Три 🧬 — ставка сохранена, но в каталоге нет иномеконов для награды."
+		}
+	}
+
+	var firstReward any
+	if len(rewards) > 0 {
+		firstReward = rewards[0].Slug
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO slot_spins
+			(player_telegram_id, bet_amount, payout_amount, symbols, reward_creature_slug,
+			 bet_type, bet_creature_id, bet_creature_slug, creature_stake_lost)
+		VALUES ($1, NULL, 0, $2, $3, 'creature', $4, $5, $6)
+	`, telegramID, strings.Join(symbols[:], "|"), firstReward, creatureID, stakedSlug, stakeLost); err != nil {
+		return SlotSpinResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return SlotSpinResult{}, err
+	}
+
+	return SlotSpinResult{
+		Symbols:           symbols,
+		BetType:           "creature",
+		BetCreatureID:     creatureID,
+		BetCreatureSlug:   stakedSlug,
+		BetCreatureName:   stakedName,
+		CreatureStakeLost: stakeLost,
+		CreatureRewards:   rewards,
+		GoldBalance:       balance,
+		WinType:           outcome.winType,
+		Multiplier:        outcome.multiplier,
+		Message:           message,
+	}, nil
+}
+
+func activeCreatureOptions(ctx context.Context, tx *sql.Tx) ([]creatureOption, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT slug, name FROM creature_species WHERE is_active=true ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	available := make([]creatureOption, 0)
+	for rows.Next() {
+		var creature creatureOption
+		if err := rows.Scan(&creature.slug, &creature.name); err != nil {
+			return nil, err
+		}
+		available = append(available, creature)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return available, nil
+}
+
+func randomCreature(available []creatureOption) (creatureOption, error) {
+	if len(available) == 0 {
+		return creatureOption{}, errors.New("no available creatures")
+	}
+	pick, err := crand.Int(crand.Reader, big.NewInt(int64(len(available))))
+	if err != nil {
+		return creatureOption{}, err
+	}
+	return available[pick.Int64()], nil
 }
 
 func nullIfEmpty(value string) any {

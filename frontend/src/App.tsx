@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
-import type { Creature, Player, RedeemResult, Rarity, SlotSpinResult, Species } from './api';
+import type { Creature, Player, RedeemResult, Rarity, SlotSpinRequest, SlotSpinResult, Species } from './api';
 
 // ==================== Типы и константы ====================
 
@@ -114,6 +114,8 @@ export function App() {
   const [redeemResult, setRedeemResult] = useState<RedeemResult | null>(null);
 
   const [slotBet, setSlotBet] = useState(50);
+  const [slotBetType, setSlotBetType] = useState<'gold' | 'creature'>('gold');
+  const [slotCreatureID, setSlotCreatureID] = useState<number | ''>('');
   const [slotReels, setSlotReels] = useState<[string, string, string]>(['🍒', '💎', '🧬']);
   const [slotRolling, setSlotRolling] = useState(false);
   const [slotResult, setSlotResult] = useState<SlotSpinResult | null>(null);
@@ -125,6 +127,10 @@ export function App() {
   const canOpen = demoMode || inTelegram;
   const displayName = player?.first_name || telegram?.initDataUnsafe.user?.first_name || 'Игрок';
   const currentSpecies = useMemo(() => new Map(species.map((item) => [item.slug, item])), [species]);
+  const selectedSlotCreature = useMemo(
+    () => (slotCreatureID === '' ? undefined : ownedCreatures.find((item) => item.id === slotCreatureID)),
+    [ownedCreatures, slotCreatureID]
+  );
 
   const loadData = useCallback(async () => {
     if (!canOpen) {
@@ -172,6 +178,12 @@ export function App() {
     }, 2_000);
     return () => window.clearInterval(timer);
   }, [canOpen, initData]);
+
+  useEffect(() => {
+    if (slotCreatureID !== '' && !ownedCreatures.some((item) => item.id === slotCreatureID)) {
+      setSlotCreatureID(ownedCreatures[0]?.id ?? '');
+    }
+  }, [ownedCreatures, slotCreatureID]);
 
   const redeemCode = useCallback(
     async (rawCode: string) => {
@@ -227,10 +239,18 @@ export function App() {
 
   const playSlot = async () => {
     if (slotRolling) return;
-    if (!player || player.gold < slotBet) {
+    if (slotBetType === 'gold' && (!player || player.gold < slotBet)) {
       setNotice({ kind: 'error', title: 'Не хватает золота', message: 'Уменьши ставку или активируй карточку, чтобы получить золото.' });
       return;
     }
+    if (slotBetType === 'creature' && !selectedSlotCreature) {
+      setNotice({ kind: 'error', title: 'Выбери иномекона', message: 'Для этой ставки нужен иномекон из твоей коллекции.' });
+      return;
+    }
+
+    const request: SlotSpinRequest = slotBetType === 'gold'
+      ? { bet_type: 'gold', bet: slotBet }
+      : { bet_type: 'creature', creature_id: selectedSlotCreature!.id };
 
     setSlotRolling(true);
     setSlotResult(null);
@@ -244,33 +264,33 @@ export function App() {
     }, 75);
 
     try {
-      const result = await api.spinSlot(initData, slotBet);
+      const result = await api.spinSlot(initData, request);
       await new Promise((resolve) => window.setTimeout(resolve, 1050));
       window.clearInterval(animationTimer);
       setSlotReels(result.symbols);
       setSlotResult(result);
+      const creatureDelta = (result.creature_slug ? 1 : 0) + (result.creature_rewards?.length ?? 0) - (result.creature_stake_lost ? 1 : 0);
       setPlayer((previous) =>
         previous
           ? {
               ...previous,
               gold: result.gold_balance,
-              owned_creature_count: (previous.owned_creature_count ?? ownedCreatures.length) + (result.creature_slug ? 1 : 0),
+              owned_creature_count: Math.max(0, (previous.owned_creature_count ?? ownedCreatures.length) + creatureDelta),
             }
           : previous
       );
-      if (result.creature_slug) {
-        void Promise.all([api.me(initData), api.creatures(initData)])
-          .then(([freshPlayer, freshCreatures]) => {
-            setPlayer(freshPlayer);
-            setOwnedCreatures(freshCreatures.items ?? []);
-          })
-          .catch(() => undefined);
-      }
+      // Refresh inventory after every spin: an item stake may be lost or award new creatures.
+      void Promise.all([api.me(initData), api.creatures(initData)])
+        .then(([freshPlayer, freshCreatures]) => {
+          setPlayer(freshPlayer);
+          setOwnedCreatures(freshCreatures.items ?? []);
+        })
+        .catch(() => undefined);
       telegram?.HapticFeedback?.notificationOccurred(result.win_type === 'miss' ? 'warning' : 'success');
     } catch (error) {
       window.clearInterval(animationTimer);
       const message = error instanceof APIError && error.code === 'slot_failed'
-        ? 'Сервер не смог сохранить результат. Проверь, что миграция backend/migrations/005_slot_machine.sql применена к той базе PostgreSQL, которую использует backend. Если миграция уже применена, проверь журнал backend — там будет исходная ошибка. Незавершённая операция откатывается, поэтому баланс не меняется.'
+        ? 'Сервер не смог сохранить результат. Проверь, что миграции backend/migrations/005_slot_machine.sql и 006_slot_creature_stakes.sql применены к базе PostgreSQL backend. Если они применены, проверь журнал backend — там будет исходная ошибка. Незавершённая операция откатывается, поэтому баланс и коллекция не меняются.'
         : errorMessage(error);
       setNotice({ kind: 'error', title: 'Не удалось завершить прокрутку', message });
       telegram?.HapticFeedback?.notificationOccurred('error');
@@ -371,7 +391,7 @@ export function App() {
                   <div>
                     <p className="eyebrow">INOME · ИГРОВОЙ БАРАБАН</p>
                     <h2>Барабан удачи</h2>
-                    <p>Совпадающие символы приносят золото. Три 🧬 — крупная награда и новый иномекон.</p>
+                    <p>Выбирай ставку золотом или иномеконом. Три 🧬 — джекпот с дополнительной наградой.</p>
                   </div>
                   <div className="slot-mini-balance">
                     <span>ТВОЁ ЗОЛОТО</span>
@@ -392,16 +412,26 @@ export function App() {
                     <><span className="slot-result-icon">✦</span><span>Барабаны крутятся…</span></>
                   ) : slotResult ? (
                     <>
-                      <span className="slot-result-icon">{slotResult.net > 0 ? '✦' : '↻'}</span>
+                      <span className="slot-result-icon">{slotResult.bet_type === 'creature' ? (slotResult.creature_stake_lost ? '↻' : slotResult.creature_rewards?.length ? '✦' : '✓') : slotResult.net > 0 ? '✦' : '↻'}</span>
                       <div className="slot-result-copy">
                         <strong>{slotResult.message}</strong>
-                        <span>
-                          Выплата: {formatNumber(slotResult.payout)} золота · чистый итог:{' '}
-                          <b className={slotResult.net >= 0 ? 'slot-net-positive' : 'slot-net-negative'}>
-                            {slotResult.net > 0 ? '+' : ''}{formatNumber(slotResult.net)}
-                          </b>
-                        </span>
-                        {slotResult.creature_slug && <small>Иномекон добавлен в твою коллекцию.</small>}
+                        {slotResult.bet_type === 'creature' ? (
+                          <span>
+                            Ставка: {slotResult.bet_creature_name ?? 'иномекон'} ·{' '}
+                            <b className={slotResult.creature_stake_lost ? 'slot-net-negative' : 'slot-net-positive'}>
+                              {slotResult.creature_stake_lost ? 'потерян' : 'сохранён'}
+                            </b>
+                            {!!slotResult.creature_rewards?.length && ` · Получено: ${slotResult.creature_rewards.map((item) => item.name).join(', ')}`}
+                          </span>
+                        ) : (
+                          <span>
+                            Выплата: {formatNumber(slotResult.payout)} золота · чистый итог:{' '}
+                            <b className={slotResult.net >= 0 ? 'slot-net-positive' : 'slot-net-negative'}>
+                              {slotResult.net > 0 ? '+' : ''}{formatNumber(slotResult.net)}
+                            </b>
+                          </span>
+                        )}
+                        {slotResult.creature_slug && <small>Новый иномекон добавлен в твою коллекцию.</small>}
                       </div>
                     </>
                   ) : (
@@ -411,38 +441,92 @@ export function App() {
 
                 <div className="slot-controls">
                   <div className="slot-bet-picker">
-                    <div className="slot-bet-label"><span>ТВОЯ СТАВКА</span><small>от 10 до 10 000 золота</small></div>
-                    <div className="slot-bet-stepper">
-                      <button type="button" aria-label="Уменьшить ставку" disabled={slotRolling || slotBet <= 10} onClick={() => setSlotBet((value) => Math.max(10, value - 10))}>−</button>
-                      <strong>{formatNumber(slotBet)}</strong>
-                      <button type="button" aria-label="Увеличить ставку" disabled={slotRolling || slotBet >= 10000} onClick={() => setSlotBet((value) => Math.min(10000, value + 10))}>+</button>
+                    <div className="slot-stake-mode" role="group" aria-label="Тип ставки">
+                      <button
+                        type="button"
+                        className={slotBetType === 'gold' ? 'is-selected' : ''}
+                        disabled={slotRolling}
+                        onClick={() => { setSlotBetType('gold'); setSlotResult(null); }}
+                      >
+                        Золотом
+                      </button>
+                      <button
+                        type="button"
+                        className={slotBetType === 'creature' ? 'is-selected' : ''}
+                        disabled={slotRolling}
+                        onClick={() => {
+                          setSlotBetType('creature');
+                          setSlotCreatureID((current) => current === '' ? (ownedCreatures[0]?.id ?? '') : current);
+                          setSlotResult(null);
+                        }}
+                      >
+                        Иномеконом
+                      </button>
                     </div>
-                    <div className="slot-bet-presets">
-                      {[10, 50, 100, 250, 500].map((value) => (
-                        <button type="button" key={value} className={slotBet === value ? 'is-selected' : ''} disabled={slotRolling} onClick={() => setSlotBet(value)}>
-                          {value}
-                        </button>
-                      ))}
-                    </div>
+
+                    {slotBetType === 'gold' ? (
+                      <>
+                        <div className="slot-bet-label"><span>ТВОЯ СТАВКА</span><small>от 10 до 10 000 золота</small></div>
+                        <div className="slot-bet-stepper">
+                          <button type="button" aria-label="Уменьшить ставку" disabled={slotRolling || slotBet <= 10} onClick={() => setSlotBet((value) => Math.max(10, value - 10))}>−</button>
+                          <strong>{formatNumber(slotBet)}</strong>
+                          <button type="button" aria-label="Увеличить ставку" disabled={slotRolling || slotBet >= 10000} onClick={() => setSlotBet((value) => Math.min(10000, value + 10))}>+</button>
+                        </div>
+                        <div className="slot-bet-presets">
+                          {[10, 50, 100, 250, 500].map((value) => (
+                            <button type="button" key={value} className={slotBet === value ? 'is-selected' : ''} disabled={slotRolling} onClick={() => setSlotBet(value)}>
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="slot-creature-picker">
+                        <div className="slot-bet-label"><span>ТВОЯ СТАВКА</span><small>выбери из коллекции</small></div>
+                        <select
+                          className="slot-creature-select"
+                          value={slotCreatureID === '' ? '' : String(slotCreatureID)}
+                          disabled={slotRolling || ownedCreatures.length === 0}
+                          onChange={(event) => setSlotCreatureID(event.target.value ? Number(event.target.value) : '')}
+                        >
+                          <option value="">{ownedCreatures.length ? 'Выбрать иномекона…' : 'Коллекция пока пуста'}</option>
+                          {ownedCreatures.map((owned) => {
+                            const item = currentSpecies.get(owned.species_slug);
+                            return (
+                              <option key={owned.id} value={String(owned.id)}>
+                                {item?.name ?? creatureName(owned.species_slug)} · экземпляр №{owned.id}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <small className="slot-stake-note">Промах — иномекон теряется. Пара сохраняет ставку, тройка приносит ещё иномекона.</small>
+                      </div>
+                    )}
                   </div>
                   <button
                     className="button button--primary slot-spin-button"
                     type="button"
                     onClick={() => void playSlot()}
-                    disabled={slotRolling || (player?.gold ?? 0) < slotBet}
+                    disabled={slotRolling || (slotBetType === 'gold' ? (player?.gold ?? 0) < slotBet : !selectedSlotCreature)}
                   >
-                    {slotRolling ? 'КРУТИМ…' : (player?.gold ?? 0) < slotBet ? 'НЕ ХВАТАЕТ ЗОЛОТА' : 'КРУТИТЬ БАРАБАН'}
+                    {slotRolling
+                      ? 'КРУТИМ…'
+                      : slotBetType === 'gold'
+                        ? (player?.gold ?? 0) < slotBet ? 'НЕ ХВАТАЕТ ЗОЛОТА' : 'КРУТИТЬ БАРАБАН'
+                        : selectedSlotCreature ? 'ПОСТАВИТЬ ИНОМЕКОН' : 'ВЫБЕРИ ИНОМЕКОН'}
                     <span>{slotRolling ? '✦' : '↗'}</span>
                   </button>
                 </div>
 
                 <div className="slot-paytable">
-                  <div><span>🍒 🍒 🍒</span><strong>×4</strong></div>
-                  <div><span>🍋 🍋 🍋</span><strong>×5</strong></div>
-                  <div><span>💎 💎 💎</span><strong>×7</strong></div>
-                  <div><span>⭐ ⭐ ⭐</span><strong>×10</strong></div>
-                  <div className="slot-jackpot"><span>🧬 🧬 🧬</span><strong>×15 + иномекон</strong></div>
-                  <p>Любые два одинаковых символа возвращают ×1,2 от ставки. Выплаты и случайный результат рассчитывает сервер.</p>
+                  <div><span>🍒 🍒 🍒</span><strong>{slotBetType === 'gold' ? '×4' : '+1 иномекон'}</strong></div>
+                  <div><span>🍋 🍋 🍋</span><strong>{slotBetType === 'gold' ? '×5' : '+1 иномекон'}</strong></div>
+                  <div><span>💎 💎 💎</span><strong>{slotBetType === 'gold' ? '×7' : '+1 иномекон'}</strong></div>
+                  <div><span>⭐ ⭐ ⭐</span><strong>{slotBetType === 'gold' ? '×10' : '+1 иномекон'}</strong></div>
+                  <div className="slot-jackpot"><span>🧬 🧬 🧬</span><strong>{slotBetType === 'gold' ? '×15 + иномекон' : '+2 иномекона'}</strong></div>
+                  <p>{slotBetType === 'gold'
+                    ? 'Любые два одинаковых символа возвращают ×1,2 от ставки. Выплаты и случайный результат рассчитывает сервер.'
+                    : 'При ставке иномеконом промах означает потерю ставки; пара сохраняет иномекона, тройка даёт одного нового, а три 🧬 — двух. Результат рассчитывает сервер.'}</p>
                 </div>
               </article>
             </section>
