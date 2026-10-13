@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
+import AdminPanel from './AdminPanel';
 import type { Creature, Player, RedeemResult, Rarity, SlotSpinRequest, SlotSpinResult, Species } from './api';
 
 // ==================== Типы и константы ====================
 
-type Page = 'home' | 'collection';
+type Page = 'home' | 'collection' | 'admin';
 type Notice = { kind: 'success' | 'error' | 'info'; title: string; message: string };
 
 const RARITIES: { value: Rarity; label: string }[] = [
@@ -102,6 +103,7 @@ export function App() {
   const autoRedeemAttempted = useRef('');
 
   const [page, setPage] = useState<Page>('home');
+  const [isAdmin, setIsAdmin] = useState(false);
   const [player, setPlayer] = useState<Player | null>(null);
   const [ownedCreatures, setOwnedCreatures] = useState<Creature[]>([]);
   const [species, setSpecies] = useState<Species[]>([]);
@@ -155,6 +157,14 @@ export function App() {
         setSpecies(catalog.items ?? []);
       } catch {
         /* The player's profile remains available if public catalog is temporarily unavailable. */
+      }
+      try {
+        // The backend is the authority: non-admin users receive 403 and won't see this tab.
+        await api.listSpecies(initData, true);
+        setIsAdmin(true);
+      } catch {
+        setIsAdmin(false);
+        setPage((currentPage) => currentPage === 'admin' ? 'home' : currentPage);
       }
     } catch (error) {
       setLoadError(errorMessage(error));
@@ -355,6 +365,7 @@ export function App() {
           >
             Коллекция <span className="nav-count">{ownedCreatures.length}</span>
           </button>
+          {isAdmin && <button className={page === 'admin' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('admin')}>Администрирование</button>}
         </nav>
         <div className="topbar-user">
           <span className="user-dot" />
@@ -652,6 +663,16 @@ export function App() {
               </div>
             )}
           </section>
+        )}
+
+        {page === 'admin' && isAdmin && (
+          <AdminPanel
+            initData={initData}
+            onCatalogChanged={async () => {
+              const catalog = await api.listSpecies(initData, false);
+              setSpecies(catalog.items ?? []);
+            }}
+          />
         )}
       </main>
     </div>

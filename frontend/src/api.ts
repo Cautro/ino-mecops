@@ -28,6 +28,12 @@ export type Species = {
   image_url: string;
   rarity: Rarity;
   passive_gold_per_hour: number;
+  health: number;
+  damage: number;
+  crit_chance: number;
+  ability_id: number;
+  ability_name: string;
+  ability_slug: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -40,9 +46,33 @@ export type SpeciesInput = {
   image_url: string;
   rarity: Rarity;
   passive_gold_per_hour: number;
+  health: number;
+  damage: number;
+  crit_chance: number;
+  ability_id: number;
 };
 
 export type SpeciesUpdateInput = Omit<SpeciesInput, 'slug'>;
+
+export type Ability = {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  element: 'meteor' | 'wind' | 'earth' | 'water' | 'arcane' | 'custom';
+  power: number;
+  accuracy_percent: number;
+  cooldown_seconds: number;
+  effect_type: 'none' | 'burn' | 'slow' | 'stun' | 'weaken' | 'shield';
+  effect_value: number;
+  effect_duration_turns: number;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AbilityInput = Omit<Ability, 'id' | 'is_default' | 'created_at' | 'updated_at'>;
+export type AbilityUpdateInput = Omit<AbilityInput, 'slug'>;
 
 // ==================== Типы промокодов и батчей ====================
 
@@ -155,11 +185,37 @@ let demoSpecies: Species[] = [
     image_url: '',
     rarity: 'common',
     passive_gold_per_hour: 5,
+    health: 100,
+    damage: 10,
+    crit_chance: 5,
+    ability_id: 1,
+    ability_name: 'Искра',
+    ability_slug: 'spark',
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
 ];
+
+let demoAbilities: Ability[] = [
+  {
+    id: 1,
+    slug: 'spark',
+    name: 'Искра',
+    description: 'Базовая энергия иномекона.',
+    element: 'meteor',
+    power: 10,
+    accuracy_percent: 95,
+    cooldown_seconds: 0,
+    effect_type: 'none',
+    effect_value: 0,
+    effect_duration_turns: 0,
+    is_default: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+];
+let demoAbilityID = 2;
 
 // ==================== Класс ошибок и функция запросов ====================
 
@@ -232,6 +288,14 @@ export const api = {
 
   listSpecies: (initData: string, admin = true) =>
     request<{ items: Species[] }>(admin ? '/api/v1/admin/creatures' : '/api/v1/catalog/creatures', initData),
+
+  listAbilities: (initData: string) => request<{ items: Ability[] }>('/api/v1/admin/abilities', initData),
+  createAbility: (initData: string, payload: AbilityInput) =>
+    request<Ability>('/api/v1/admin/abilities', initData, { method: 'POST', body: payload }),
+  updateAbility: (initData: string, id: number, payload: AbilityUpdateInput) =>
+    request<Ability>(`/api/v1/admin/abilities/${id}`, initData, { method: 'PUT', body: payload }),
+  deleteAbility: (initData: string, id: number) =>
+    request<{ ok: boolean; id: number }>(`/api/v1/admin/abilities/${id}`, initData, { method: 'DELETE' }),
 
   createSpecies: (initData: string, payload: SpeciesInput) =>
     request<Species>('/api/v1/admin/creatures', initData, { method: 'POST', body: payload }),
@@ -504,6 +568,37 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     return { ok: true, batch_id: id } as T;
   }
 
+  if (path === '/api/v1/admin/abilities') {
+    if (options.method === 'POST') {
+      const input = options.body as AbilityInput;
+      if (demoAbilities.some((item) => item.slug === input.slug)) throw new APIError('Такая способность уже существует.', 409);
+      const now = new Date().toISOString();
+      const created: Ability = { ...input, id: demoAbilityID++, is_default: false, created_at: now, updated_at: now };
+      demoAbilities = [...demoAbilities, created];
+      return created as T;
+    }
+    return { items: demoAbilities } as T;
+  }
+
+  const abilityMatch = path.match(/^\/api\/v1\/admin\/abilities\/(\d+)$/);
+  if (abilityMatch) {
+    const id = Number(abilityMatch[1]);
+    const item = demoAbilities.find((ability) => ability.id === id);
+    if (!item) throw new APIError('Способность не найдена.', 404);
+    if (options.method === 'PUT') {
+      const input = options.body as AbilityUpdateInput;
+      const updated: Ability = { ...item, ...input, updated_at: new Date().toISOString() };
+      demoAbilities = demoAbilities.map((ability) => (ability.id === id ? updated : ability));
+      return updated as T;
+    }
+    if (options.method === 'DELETE') {
+      if (item.is_default) throw new APIError('Базовую способность нельзя удалить.', 409);
+      if (demoSpecies.some((species) => species.ability_id === id)) throw new APIError('Способность назначена иномеконам.', 409);
+      demoAbilities = demoAbilities.filter((ability) => ability.id !== id);
+      return { ok: true, id } as T;
+    }
+  }
+
   if (path === '/api/v1/admin/creatures' || path === '/api/v1/catalog/creatures') {
     if (path === '/api/v1/catalog/creatures') {
       return { items: demoSpecies.filter((species) => species.is_active) } as T;
@@ -515,8 +610,15 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       }
 
       const now = new Date().toISOString();
+      const ability = demoAbilities.find((item) => item.id === input.ability_id) ?? demoAbilities[0];
       const created: Species = {
         ...input,
+        health: input.health ?? 100,
+        damage: input.damage ?? 10,
+        crit_chance: input.crit_chance ?? 5,
+        ability_id: input.ability_id ?? ability.id,
+        ability_name: ability.name,
+        ability_slug: ability.slug,
         id: demoSpeciesID++,
         is_active: true,
         created_at: now,
@@ -537,9 +639,12 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     if (options.method === 'PUT') {
       const input = options.body as SpeciesUpdateInput;
 
+      const ability = demoAbilities.find((entry) => entry.id === input.ability_id) ?? demoAbilities[0];
       const updated: Species = {
         ...item,
         ...input,
+        ability_name: ability.name,
+        ability_slug: ability.slug,
         updated_at: new Date().toISOString(),
       };
       demoSpecies = demoSpecies.map((species) => (species.id === id ? updated : species));
