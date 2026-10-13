@@ -1,0 +1,51 @@
+package shop
+
+import "time"
+
+type EggOffer struct {
+	Rarity           string `json:"rarity"`
+	Label            string `json:"label"`
+	PriceGold        int64  `json:"price_gold"`
+	Available        bool   `json:"available"`
+	AvailableSpecies int    `json:"available_species"`
+}
+
+type Egg struct {
+	ID          int64     `json:"id"`
+	Rarity      string    `json:"rarity"`
+	PriceGold   int64     `json:"price_gold"`
+	PurchasedAt time.Time `json:"purchased_at"`
+}
+
+type ShopData struct {
+	EggOffers []EggOffer `json:"egg_offers"`
+	Eggs      []Egg      `json:"eggs"`
+}
+
+type BuyEggInput struct {
+	Rarity string `json:"rarity"`
+}
+
+type BuyEggResult struct {
+	Egg         Egg   `json:"egg"`
+	GoldBalance int64 `json:"gold_balance"`
+}
+
+type HatchResult struct {
+	EggID         int64  `json:"egg_id"`
+	CreatureID    int64  `json:"creature_id"`
+	SpeciesSlug   string `json:"species_slug"`
+	Name          string `json:"name"`
+	ImageURL      string `json:"image_url"`
+	Rarity        string `json:"rarity"`
+	SellPriceGold int64  `json:"sell_price_gold"`
+	GoldBalance   int64  `json:"gold_balance"`
+}
+
+type SellResult struct {
+	CreatureID  int64  `json:"creature_id"`
+	SpeciesSlug string `json:"species_slug"`
+	Name        string `json:"name"`
+	GoldAdded   int64  `json:"gold_added"`
+	GoldBalance int64  `json:"gold_balance"`
+}

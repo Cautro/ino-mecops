@@ -18,7 +18,7 @@ const RARITY_OPTIONS: { value: Rarity; label: string }[] = [
 ];
 
 const blankSpecies = (abilityID = 1): SpeciesInput => ({
-  slug: '', name: '', description: '', image_url: '', rarity: 'common', passive_gold_per_hour: 5,
+  slug: '', name: '', description: '', image_url: '', sell_price_gold: 0, rarity: 'common', passive_gold_per_hour: 5,
   health: 100, damage: 10, crit_chance: 5, ability_id: abilityID,
 });
 const blankBatch = (): CreateBatchInput => ({
@@ -81,7 +81,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   const editSpecies = (item: Species) => {
     setEditingSpeciesID(item.id);
     setSpeciesForm({
-      slug: item.slug, name: item.name, description: item.description, image_url: item.image_url,
+      slug: item.slug, name: item.name, description: item.description, image_url: item.image_url, sell_price_gold: item.sell_price_gold,
       rarity: item.rarity, passive_gold_per_hour: item.passive_gold_per_hour, health: item.health,
       damage: item.damage, crit_chance: item.crit_chance, ability_id: item.ability_id,
     });
@@ -195,6 +195,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
               {field('Название', speciesForm.name, (v) => setSpeciesForm((s) => ({ ...s, name: v })), { required: true })}
               <label className="field"><span className="field-label">Редкость иномекона</span><select value={speciesForm.rarity} onChange={(e) => setSpeciesForm((s) => ({ ...s, rarity: e.target.value as Rarity }))}>{RARITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               {field('Пассивный доход (золота/час)', speciesForm.passive_gold_per_hour, (v) => setSpeciesForm((s) => ({ ...s, passive_gold_per_hour: Number(v) })), { type: 'number', min: 0, max: 10000000, required: true })}
+              {field('Цена продажи (золота)', speciesForm.sell_price_gold, (v) => setSpeciesForm((s) => ({ ...s, sell_price_gold: Number(v) })), { type: 'number', min: 0, max: 1000000000, required: true })}
               <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={speciesForm.description} onChange={(e) => setSpeciesForm((s) => ({ ...s, description: e.target.value }))} rows={3} maxLength={1000} /></label>
               <label className="field admin-field-wide"><span className="field-label">Изображение</span><input value={speciesForm.image_url} onChange={(e) => setSpeciesForm((s) => ({ ...s, image_url: e.target.value }))} placeholder="Ссылка или загрузка файла ниже" /><input className="admin-file-input" type="file" accept="image/png,image/jpeg,image/gif" disabled={imageBusy} onChange={(e) => { const file = e.target.files?.[0]; void uploadSpeciesImage(file); e.currentTarget.value = ''; }} /><small>{imageBusy ? 'Загружаем изображение…' : 'PNG, JPEG или GIF, до 5 МБ. Файл сохраняется на сервере.'}</small>{speciesForm.image_url && <img src={speciesForm.image_url} alt="Предпросмотр иномекона" className="admin-image-preview" />}</label>
             </div>
@@ -203,7 +204,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
           <div className="admin-list">
             {species.map((item) => <article className={`surface admin-item ${!item.is_active ? 'admin-item--archived' : ''}`} key={item.id}>
               {item.image_url ? <img src={item.image_url} alt="" className="admin-item-image" /> : <div className="admin-item-image admin-item-image--empty">◇</div>}
-              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час</small>{item.description && <p>{item.description}</p>}</div>
+              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small>{item.description && <p>{item.description}</p>}</div>
               <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => editSpecies(item)}>Изменить</button>{item.is_active && <button className="button button--ghost button--small" onClick={() => void archiveSpecies(item)} disabled={busy}>В архив</button>}</div>
             </article>)}
             {!species.length && <div className="surface admin-empty">Каталог пока пуст.</div>}

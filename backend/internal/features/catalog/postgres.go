@@ -87,7 +87,7 @@ func (r *PostgresRepository) DeleteAbility(ctx context.Context, id int64) error 
 }
 
 const speciesSelect = `
-SELECT s.id, s.slug, s.name, s.description, s.image_url, s.rarity, s.passive_gold_per_hour,
+SELECT s.id, s.slug, s.name, s.description, s.image_url, s.sell_price_gold, s.rarity, s.passive_gold_per_hour,
        s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at
 FROM creature_species s
 JOIN abilities a ON a.id=s.ability_id
@@ -95,7 +95,7 @@ JOIN abilities a ON a.id=s.ability_id
 
 func scanSpecies(scanner interface{ Scan(...any) error }) (Species, error) {
 	var item Species
-	err := scanner.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.Rarity, &item.PassiveGoldPerHour,
+	err := scanner.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.SellPriceGold, &item.Rarity, &item.PassiveGoldPerHour,
 		&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
@@ -126,14 +126,15 @@ func (r *PostgresRepository) ListSpecies(ctx context.Context, includeArchived bo
 // the player already owns. Unowned entries are reduced to an opaque catalogue
 // ID and locked flag; the name, slug, image and stats never leave the server.
 func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTelegramID int64) ([]CollectionSpecies, error) {
-	query := `SELECT s.id, s.slug, s.name, s.description, s.image_url, s.rarity, s.passive_gold_per_hour,
+	query := `SELECT s.id, s.slug, s.name, s.description, s.image_url, s.sell_price_gold, s.rarity, s.passive_gold_per_hour,
 		s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at,
-		EXISTS (SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug) AS is_owned
+		(EXISTS (SELECT 1 FROM player_discovered_species ds WHERE ds.player_telegram_id = $1 AND ds.species_slug = s.slug)
+		 OR EXISTS (SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug)) AS is_discovered
 		FROM creature_species s
 		JOIN abilities a ON a.id = s.ability_id
-		WHERE s.is_active = TRUE OR EXISTS (
-			SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug
-		)
+		WHERE s.is_active = TRUE
+		   OR EXISTS (SELECT 1 FROM player_discovered_species ds WHERE ds.player_telegram_id = $1 AND ds.species_slug = s.slug)
+		   OR EXISTS (SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug)
 		ORDER BY s.updated_at DESC, s.id DESC`
 	rows, err := r.db.QueryContext(ctx, query, ownerTelegramID)
 	if err != nil {
@@ -144,12 +145,12 @@ func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTel
 	items := make([]CollectionSpecies, 0)
 	for rows.Next() {
 		var item Species
-		var owned bool
-		if err := rows.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.Rarity, &item.PassiveGoldPerHour,
-			&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &owned); err != nil {
+		var discovered bool
+		if err := rows.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.SellPriceGold, &item.Rarity, &item.PassiveGoldPerHour,
+			&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &discovered); err != nil {
 			return nil, err
 		}
-		items = append(items, collectionSpecies(item, owned))
+		items = append(items, collectionSpecies(item, discovered))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -160,9 +161,9 @@ func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTel
 func (r *PostgresRepository) CreateSpecies(ctx context.Context, input SpeciesInput) (Species, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO creature_species (slug, name, description, image_url, rarity, passive_gold_per_hour, health, damage, crit_chance, ability_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		input.Slug, input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID).Scan(&id)
+		INSERT INTO creature_species (slug, name, description, image_url, sell_price_gold, rarity, passive_gold_per_hour, health, damage, crit_chance, ability_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		input.Slug, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID).Scan(&id)
 	if err != nil {
 		return Species{}, mapDatabaseError(err)
 	}
@@ -172,9 +173,9 @@ func (r *PostgresRepository) CreateSpecies(ctx context.Context, input SpeciesInp
 func (r *PostgresRepository) UpdateSpecies(ctx context.Context, id int64, input SpeciesUpdateInput) (Species, error) {
 	var updatedID int64
 	err := r.db.QueryRowContext(ctx, `
-		UPDATE creature_species SET name=$2, description=$3, image_url=$4, rarity=$5, passive_gold_per_hour=$6,
-			health=$7, damage=$8, crit_chance=$9, ability_id=$10, updated_at=now()
-		WHERE id=$1 RETURNING id`, id, input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID).Scan(&updatedID)
+		UPDATE creature_species SET name=$2, description=$3, image_url=$4, sell_price_gold=$5, rarity=$6, passive_gold_per_hour=$7,
+			health=$8, damage=$9, crit_chance=$10, ability_id=$11, updated_at=now()
+		WHERE id=$1 RETURNING id`, id, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID).Scan(&updatedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Species{}, ErrNotFound
 	}

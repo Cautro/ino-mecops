@@ -50,6 +50,7 @@ type Species struct {
 	Name               string    `json:"name"`
 	Description        string    `json:"description"`
 	ImageURL           string    `json:"image_url"`
+	SellPriceGold      int64     `json:"sell_price_gold"`
 	Rarity             string    `json:"rarity"`
 	PassiveGoldPerHour int64     `json:"passive_gold_per_hour"`
 	Health             int       `json:"health"`
@@ -73,6 +74,7 @@ type CollectionSpecies struct {
 	Name               *string  `json:"name,omitempty"`
 	Description        *string  `json:"description,omitempty"`
 	ImageURL           *string  `json:"image_url,omitempty"`
+	SellPriceGold      *int64   `json:"sell_price_gold,omitempty"`
 	Rarity             *string  `json:"rarity,omitempty"`
 	PassiveGoldPerHour *int64   `json:"passive_gold_per_hour,omitempty"`
 	Health             *int     `json:"health,omitempty"`
@@ -83,15 +85,16 @@ type CollectionSpecies struct {
 	AbilitySlug        *string  `json:"ability_slug,omitempty"`
 }
 
-func collectionSpecies(item Species, owned bool) CollectionSpecies {
-	card := CollectionSpecies{ID: item.ID, Locked: !owned}
-	if !owned {
+func collectionSpecies(item Species, discovered bool) CollectionSpecies {
+	card := CollectionSpecies{ID: item.ID, Locked: !discovered}
+	if !discovered {
 		return card
 	}
 	card.Slug = &item.Slug
 	card.Name = &item.Name
 	card.Description = &item.Description
 	card.ImageURL = &item.ImageURL
+	card.SellPriceGold = &item.SellPriceGold
 	card.Rarity = &item.Rarity
 	card.PassiveGoldPerHour = &item.PassiveGoldPerHour
 	card.Health = &item.Health
@@ -108,6 +111,7 @@ type SpeciesInput struct {
 	Name               string  `json:"name"`
 	Description        string  `json:"description"`
 	ImageURL           string  `json:"image_url"`
+	SellPriceGold      int64   `json:"sell_price_gold"`
 	Rarity             string  `json:"rarity"`
 	PassiveGoldPerHour int64   `json:"passive_gold_per_hour"`
 	Health             int     `json:"health"`
@@ -120,6 +124,7 @@ type SpeciesUpdateInput struct {
 	Name               string  `json:"name"`
 	Description        string  `json:"description"`
 	ImageURL           string  `json:"image_url"`
+	SellPriceGold      int64   `json:"sell_price_gold"`
 	Rarity             string  `json:"rarity"`
 	PassiveGoldPerHour int64   `json:"passive_gold_per_hour"`
 	Health             int     `json:"health"`

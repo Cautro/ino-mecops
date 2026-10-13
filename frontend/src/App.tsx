@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
 import AdminPanel from './AdminPanel';
-import type { CollectionSpecies, Creature, Player, RedeemResult, Rarity, SlotSpinRequest, SlotSpinResult } from './api';
+import type { CollectionSpecies, Creature, HatchEggResult, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult } from './api';
 
 // ==================== Типы и константы ====================
 
-type Page = 'home' | 'collection' | 'admin';
+type Page = 'home' | 'collection' | 'shop' | 'admin';
 type Notice = { kind: 'success' | 'error' | 'info'; title: string; message: string };
 
 const RARITIES: { value: Rarity; label: string }[] = [
@@ -107,6 +107,10 @@ export function App() {
   const [player, setPlayer] = useState<Player | null>(null);
   const [ownedCreatures, setOwnedCreatures] = useState<Creature[]>([]);
   const [species, setSpecies] = useState<CollectionSpecies[]>([]);
+  const [shopData, setShopData] = useState<ShopData | null>(null);
+  const [shopBusy, setShopBusy] = useState(false);
+  const [lastHatch, setLastHatch] = useState<HatchEggResult | null>(null);
+  const [confirmSellID, setConfirmSellID] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -181,6 +185,11 @@ export function App() {
         setSpecies(catalog.items ?? []);
       } catch {
         /* The player's profile remains available if public catalog is temporarily unavailable. */
+      }
+      try {
+        setShopData(await api.shop(initData));
+      } catch {
+        setShopData(null);
       }
       try {
         // The backend is the authority: non-admin users receive 403 and won't see this tab.
@@ -341,6 +350,70 @@ export function App() {
     }
   };
 
+  const refreshAfterShopAction = async () => {
+    const [freshPlayer, freshCreatures, freshCatalog, freshShop] = await Promise.all([
+      api.me(initData), api.creatures(initData), api.collectionCatalog(initData), api.shop(initData),
+    ]);
+    setPlayer(freshPlayer);
+    setOwnedCreatures(freshCreatures.items ?? []);
+    setSpecies(freshCatalog.items ?? []);
+    setShopData(freshShop);
+  };
+
+  const buyEgg = async (rarity: Rarity) => {
+    if (shopBusy) return;
+    setShopBusy(true);
+    setNotice(null);
+    try {
+      const result = await api.buyEgg(initData, rarity);
+      await refreshAfterShopAction();
+      setNotice({ kind: 'success', title: 'Яйцо куплено', message: `Яйцо редкости «${RARITIES.find((item) => item.value === rarity)?.label ?? rarity}» добавлено в инвентарь. Списано ${formatNumber(result.egg.price_gold)} золота.` });
+      telegram?.HapticFeedback?.notificationOccurred('success');
+    } catch (error) {
+      setNotice({ kind: 'error', title: 'Не удалось купить яйцо', message: errorMessage(error) });
+      telegram?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      setShopBusy(false);
+    }
+  };
+
+  const hatchEgg = async (eggID: number) => {
+    if (shopBusy) return;
+    setShopBusy(true);
+    setNotice(null);
+    try {
+      const result = await api.hatchEgg(initData, eggID);
+      setLastHatch(result);
+      setConfirmSellID(null);
+      await refreshAfterShopAction();
+      setNotice({ kind: 'success', title: 'Яйцо вылупилось!', message: `Ты получил иномекона «${result.name}». Он добавлен в коллекцию.` });
+      telegram?.HapticFeedback?.notificationOccurred('success');
+    } catch (error) {
+      setNotice({ kind: 'error', title: 'Не удалось вылупить яйцо', message: errorMessage(error) });
+      telegram?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      setShopBusy(false);
+    }
+  };
+
+  const sellCreature = async (creatureID: number) => {
+    if (shopBusy) return;
+    setShopBusy(true);
+    setNotice(null);
+    try {
+      const result = await api.sellCreature(initData, creatureID);
+      setConfirmSellID(null);
+      await refreshAfterShopAction();
+      setNotice({ kind: 'success', title: 'Иномекон продан', message: `За «${result.name}» начислено ${formatNumber(result.gold_added)} золота.` });
+      telegram?.HapticFeedback?.notificationOccurred('success');
+    } catch (error) {
+      setNotice({ kind: 'error', title: 'Не удалось продать иномекона', message: errorMessage(error) });
+      telegram?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      setShopBusy(false);
+    }
+  };
+
   if (!canOpen)
     return (
       <div className="launch-gate">
@@ -395,6 +468,9 @@ export function App() {
             onClick={() => showPage('collection')}
           >
             Коллекция <span className="nav-count">{ownedCreatures.length}</span>
+          </button>
+          <button className={page === 'shop' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('shop')}>
+            Магазин <span className="nav-count">{shopData?.eggs.length ?? 0}</span>
           </button>
           {isAdmin && <button className={page === 'admin' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('admin')}>Администрирование</button>}
         </nav>
@@ -656,6 +732,65 @@ export function App() {
               </article>
             </section>
           </>
+        )}
+
+        {page === 'shop' && (
+          <section className="subpage shop-page">
+            <div className="subpage-heading">
+              <div>
+                <p className="eyebrow">INOME · МАГАЗИН</p>
+                <h1>Магазин</h1>
+                <p className="page-lead">Покупай яйца за золото, вылупляй новых иномеконов или продавай лишних из своей коллекции.</p>
+              </div>
+              <div className="shop-balance"><span>ТВОЙ БАЛАНС</span><strong>{formatNumber(player?.gold ?? 0)}</strong><small>золота</small></div>
+            </div>
+
+            {!shopData ? (
+              <div className="surface shop-empty"><h2>Магазин пока недоступен</h2><p>Не удалось загрузить данные магазина. Обнови страницу; если ошибка повторяется, проверь, что миграция 008 применена и backend перезапущен.</p><button className="button button--secondary" onClick={() => void api.shop(initData).then(setShopData).catch((error) => setNotice({ kind: 'error', title: 'Ошибка магазина', message: errorMessage(error) }))}>Повторить</button></div>
+            ) : (
+              <>
+                <div className="shop-section-heading"><div><p className="eyebrow">СЛУЧАЙНЫЙ ИНОМЕКОН</p><h2>Яйца</h2><p>Из яйца вылупляется случайный активный вид выбранной редкости. Сначала в каталоге должен быть хотя бы один такой иномекон.</p></div></div>
+                <div className="egg-grid">
+                  {shopData.egg_offers.map((offer) => {
+                    const rarityLabel = RARITIES.find((item) => item.value === offer.rarity)?.label ?? offer.label;
+                    const emoji = ({ common: '🥚', rare: '🪺', epic: '💠', legendary: '🌟', mythic: '🌌' } as Record<Rarity, string>)[offer.rarity];
+                    const canAfford = (player?.gold ?? 0) >= offer.price_gold;
+                    return <article className={`surface egg-card egg-card--${offer.rarity}`} key={offer.rarity}>
+                      <div className="egg-card-art"><span>{emoji}</span></div>
+                      <div className="egg-card-copy"><span className={`rarity-tag rarity-tag--${offer.rarity}`}>{rarityLabel}</span><h3>{offer.label} яйцо</h3><p>{offer.available ? `В каталоге ${offer.available_species} ${offer.available_species === 1 ? 'вид' : offer.available_species < 5 ? 'вида' : 'видов'} этой редкости.` : 'Пока нет активных иномеконов этой редкости.'}</p></div>
+                      <div className="egg-card-buy"><strong>{formatNumber(offer.price_gold)} <small>золота</small></strong><button className="button button--primary" disabled={shopBusy || !offer.available || !canAfford} onClick={() => void buyEgg(offer.rarity)}>{shopBusy ? 'Подожди…' : !offer.available ? 'Нет в каталоге' : !canAfford ? 'Не хватает золота' : 'Купить яйцо'}</button></div>
+                    </article>;
+                  })}
+                </div>
+
+                <div className="shop-section-heading shop-section-heading--inventory"><div><p className="eyebrow">ТВОЙ ИНВЕНТАРЬ</p><h2>Яйца в рюкзаке <span className="nav-count">{shopData.eggs.length}</span></h2><p>Вылупление бесплатно. Внутри будет случайный иномекон соответствующей редкости.</p></div></div>
+                {shopData.eggs.length ? <div className="owned-eggs-grid">
+                  {shopData.eggs.map((egg) => <article className="surface owned-egg-card" key={egg.id}>
+                    <div className={`owned-egg-icon owned-egg-icon--${egg.rarity}`} aria-hidden="true">🥚</div>
+                    <div className="owned-egg-copy"><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span><strong>{RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity} яйцо</strong><small>Куплено {formatDate(egg.purchased_at)}</small></div>
+                    <button className="button button--primary" disabled={shopBusy} onClick={() => void hatchEgg(egg.id)}>{shopBusy ? 'Открываем…' : 'Вылупить'}</button>
+                  </article>)}
+                </div> : <div className="surface shop-empty shop-empty--compact"><strong>Пока нет яиц</strong><span>Купи яйцо выше — оно появится здесь, и ты сможешь вылупить его в любой момент.</span></div>}
+
+                {lastHatch && <div className="surface hatch-result"><ImagePreview src={lastHatch.image_url} name={lastHatch.name} /><div><span className="eyebrow">НОВЫЙ ИНОМЕКОН</span><h3>{lastHatch.name}</h3><p>{RARITIES.find((item) => item.value === lastHatch.rarity)?.label ?? lastHatch.rarity} · цена продажи {formatNumber(lastHatch.sell_price_gold)} золота</p><button className="text-button" onClick={() => showPage('collection')}>Открыть коллекцию →</button></div><span className="hatch-confetti" aria-hidden="true">✦</span></div>}
+
+                <div className="shop-section-heading shop-section-heading--inventory"><div><p className="eyebrow">ОБМЕН НА ЗОЛОТО</p><h2>Продать иномекона</h2><p>Цена задана в админке для каждого вида. Продажа удаляет один выбранный экземпляр, но сам вид останется открытым в коллекции.</p></div></div>
+                {ownedCreatures.length ? <div className="shop-creature-list">
+                  {ownedCreatures.map((owned) => {
+                    const detail = currentSpecies.get(owned.species_slug);
+                    const name = detail?.name ?? creatureName(owned.species_slug);
+                    const price = detail?.sell_price_gold ?? 0;
+                    const confirming = confirmSellID === owned.id;
+                    return <article className="surface shop-creature-row" key={owned.id}>
+                      <ImagePreview src={detail?.image_url ?? ''} name={name} />
+                      <div className="shop-creature-copy"><strong>{name}</strong><span>{detail ? RARITIES.find((item) => item.value === detail.rarity)?.label : 'Иномекон'} · получен {formatDate(owned.obtained_at)}</span><small>{price > 0 ? `Цена продажи: ${formatNumber(price)} золота` : 'Продажа не настроена для этого вида'}</small></div>
+                      {confirming ? <div className="shop-creature-actions"><button className="button button--secondary button--small" disabled={shopBusy} onClick={() => setConfirmSellID(null)}>Отмена</button><button className="button button--danger button--small" disabled={shopBusy || price <= 0} onClick={() => void sellCreature(owned.id)}>{shopBusy ? 'Продаём…' : 'Подтвердить'}</button></div> : <button className="button button--secondary button--small" disabled={shopBusy || price <= 0} onClick={() => setConfirmSellID(owned.id)}>{price > 0 ? `Продать · ${formatNumber(price)}` : 'Нет цены'}</button>}
+                    </article>;
+                  })}
+                </div> : <div className="surface shop-empty shop-empty--compact"><strong>Некого продавать</strong><span>Получай иномеконов из яиц, карточек или барабана удачи.</span></div>}
+              </>
+            )}
+          </section>
         )}
 
         {page === 'collection' && (

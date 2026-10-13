@@ -70,6 +70,12 @@ func (r *PostgresRepository) Redeem(ctx context.Context, telegramID int64, codeH
 		`, telegramID, creature.String, result.CodeID); err != nil {
 			return RedeemResult{}, err
 		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO player_discovered_species (player_telegram_id, species_slug)
+			VALUES ($1, $2) ON CONFLICT DO NOTHING
+		`, telegramID, creature.String); err != nil {
+			return RedeemResult{}, err
+		}
 		result.CreatureSlug = creature.String
 	}
 

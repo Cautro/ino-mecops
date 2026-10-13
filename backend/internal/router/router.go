@@ -12,6 +12,7 @@ import (
 	"github.com/cautro/inomecops/backend/internal/features/catalog"
 	"github.com/cautro/inomecops/backend/internal/features/codes"
 	"github.com/cautro/inomecops/backend/internal/features/gameplay"
+	"github.com/cautro/inomecops/backend/internal/features/shop"
 	"github.com/cautro/inomecops/backend/internal/services"
 )
 
@@ -21,6 +22,7 @@ type Dependencies struct {
 	Admin     *admin_panel.Handler
 	Catalog   *catalog.Handler
 	Gameplay  *gameplay.Handler
+	Shop      *shop.Handler
 	UploadDir string
 	DB        *sql.DB
 	Log       *log.Logger
@@ -47,6 +49,18 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/me", protected(http.HandlerFunc(deps.Auth.Me)))
 	mux.Handle("GET /api/v1/game/overview", protected(http.HandlerFunc(deps.Gameplay.Overview)))
 	mux.Handle("POST /api/v1/game/slot", protected(http.HandlerFunc(deps.Gameplay.SpinSlot)))
+	mux.Handle("GET /api/v1/shop", protected(http.HandlerFunc(deps.Shop.Overview)))
+	mux.Handle("POST /api/v1/shop/eggs/buy", protected(http.HandlerFunc(deps.Shop.BuyEgg)))
+	mux.Handle("POST /api/v1/shop/eggs/{id}/hatch", protected(http.HandlerFunc(deps.Shop.HatchEgg)))
+	mux.Handle("POST /api/v1/shop/creatures/{id}/sell", protected(http.HandlerFunc(deps.Shop.SellCreature)))
+	mux.Handle("GET /api/v1/game/players", protected(http.HandlerFunc(deps.Gameplay.Players)))
+	mux.Handle("GET /api/v1/game/battles", protected(http.HandlerFunc(deps.Gameplay.Battles)))
+	mux.Handle("POST /api/v1/game/battles", protected(http.HandlerFunc(deps.Gameplay.CreateBattle)))
+	mux.Handle("POST /api/v1/game/battles/{id}/accept", protected(http.HandlerFunc(deps.Gameplay.AcceptBattle)))
+	mux.Handle("POST /api/v1/game/battles/{id}/decline", protected(http.HandlerFunc(deps.Gameplay.DeclineBattle)))
+	mux.Handle("POST /api/v1/game/battles/{id}/cancel", protected(http.HandlerFunc(deps.Gameplay.CancelBattle)))
+	mux.Handle("POST /api/v1/game/battles/{id}/turn", protected(http.HandlerFunc(deps.Gameplay.Turn)))
+	mux.Handle("POST /api/v1/game/battles/{id}/surrender", protected(http.HandlerFunc(deps.Gameplay.Surrender)))
 	mux.Handle("GET /api/v1/me/creatures", protected(http.HandlerFunc(deps.Codes.ListCreatures)))
 	mux.Handle("POST /api/v1/codes/redeem", protected(http.HandlerFunc(deps.Codes.Redeem)))
 	mux.Handle("GET /api/v1/admin/code-batches", protected(http.HandlerFunc(deps.Admin.ListBatches)))

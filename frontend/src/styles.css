@@ -3643,3 +3643,83 @@ button.species-card--catalog:focus-visible {
   .creature-modal-hero > .species-image--empty { flex-basis: 86px; width: 86px; height: 86px; }
   .creature-stat { padding: 11px; }
 }
+
+/* ==================== Магазин яиц и продажа иномеконов ==================== */
+.shop-page { display: grid; gap: 20px; }
+.shop-balance { display: grid; gap: 3px; min-width: 150px; padding: 15px 18px; border: 1px solid var(--line-strong); border-radius: 15px; background: linear-gradient(145deg, #101b2c, #0b111c); }
+.shop-balance > span { color: #91a8c6; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+.shop-balance > strong { color: var(--gold); font-size: 26px; font-variant-numeric: tabular-nums; }
+.shop-balance > small { color: var(--muted); font-size: 11px; }
+.shop-section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-top: 7px; }
+.shop-section-heading h2 { margin: 4px 0 6px; font-size: clamp(21px, 3vw, 27px); letter-spacing: -.03em; }
+.shop-section-heading p:not(.eyebrow) { max-width: 680px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.shop-section-heading--inventory { margin-top: 24px; }
+.egg-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.egg-card { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 12px; padding: 15px; overflow: hidden; background: linear-gradient(150deg, #101a2a, #0b111b 78%); border-color: #273750; }
+.egg-card-art { display: grid; place-items: center; min-height: 100px; border: 1px solid #2b3d57; border-radius: 14px; background: radial-gradient(circle at 50% 25%, #263a55, #090e16 74%); }
+.egg-card-art span { font-size: 44px; filter: drop-shadow(0 8px 14px rgba(0,0,0,.35)); }
+.egg-card-copy { min-width: 0; align-self: center; }
+.egg-card-copy h3 { margin: 7px 0 5px; font-size: 16px; }
+.egg-card-copy p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.egg-card-buy { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 12px; margin-top: 1px; border-top: 1px solid rgba(81, 103, 135, .28); }
+.egg-card-buy > strong { color: #f3d17a; font-size: 20px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.egg-card-buy > strong small { color: var(--muted); font-size: 10px; font-weight: 600; }
+.egg-card-buy .button { min-height: 38px; padding: 9px 12px; font-size: 12px; }
+.rarity-tag { display: inline-flex; align-items: center; padding: 4px 7px; border: 1px solid #3b4b63; border-radius: 999px; color: #c5d8f5; background: #142035; font-size: 10px; font-weight: 800; letter-spacing: .04em; }
+.rarity-tag--common { border-color: #43546a; color: #d5e0ef; background: #182230; }
+.rarity-tag--rare { border-color: #397eaa; color: #8ed4ff; background: #10283b; }
+.rarity-tag--epic { border-color: #7659b8; color: #c9adff; background: #211738; }
+.rarity-tag--legendary { border-color: #a77b32; color: #ffda8c; background: #302410; }
+.rarity-tag--mythic { border-color: #398f85; color: #91f0de; background: #0d2c2a; }
+.egg-card--rare .egg-card-art { border-color: #305f85; }
+.egg-card--epic .egg-card-art { border-color: #5e4788; }
+.egg-card--legendary .egg-card-art { border-color: #8d692e; }
+.egg-card--mythic .egg-card-art { border-color: #28796f; }
+.owned-eggs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.owned-egg-card { display: flex; align-items: center; gap: 12px; padding: 14px; border-color: #2b3d57; background: #0d1420; }
+.owned-egg-icon { display: grid; place-items: center; flex: 0 0 52px; width: 52px; height: 52px; border: 1px solid #344660; border-radius: 12px; background: #101c2d; font-size: 28px; }
+.owned-egg-icon--rare { border-color: #397eaa; }
+.owned-egg-icon--epic { border-color: #7659b8; }
+.owned-egg-icon--legendary { border-color: #a77b32; }
+.owned-egg-icon--mythic { border-color: #398f85; }
+.owned-egg-copy { flex: 1; min-width: 0; display: grid; gap: 5px; }
+.owned-egg-copy strong { font-size: 13px; }
+.owned-egg-copy small { color: var(--muted); font-size: 10px; }
+.owned-egg-card .button { flex-shrink: 0; min-height: 37px; padding: 8px 10px; font-size: 12px; }
+.shop-empty { display: grid; justify-items: start; gap: 9px; padding: 22px; border-color: #273750; background: #0c131e; }
+.shop-empty h2, .shop-empty strong { margin: 0; }
+.shop-empty p, .shop-empty span { max-width: 650px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.shop-empty--compact { padding: 18px; }
+.shop-creature-list { display: grid; gap: 10px; }
+.shop-creature-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 12px 14px; border-color: #273750; background: linear-gradient(120deg, #0e1725, #0b1019); }
+.shop-creature-row > .species-image, .shop-creature-row > .species-image--empty { flex: 0 0 62px; width: 62px; height: 62px; border-radius: 12px; }
+.shop-creature-copy { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.shop-creature-copy strong { color: var(--ink); font-size: 14px; }
+.shop-creature-copy span, .shop-creature-copy small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.shop-creature-actions { display: flex; gap: 6px; }
+.button--danger { color: #fff; background: #a13e48; border: 1px solid #c25c66; }
+.button--danger:hover:not(:disabled) { background: #bd4955; }
+.hatch-result { position: relative; display: flex; align-items: center; gap: 16px; padding: 16px; overflow: hidden; border-color: #426d91; background: linear-gradient(110deg, #11243b, #0d1522); }
+.hatch-result > .species-image, .hatch-result > .species-image--empty { flex: 0 0 82px; width: 82px; height: 82px; border-radius: 14px; }
+.hatch-result h3 { margin: 5px 0; font-size: 20px; }
+.hatch-result p { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+.hatch-confetti { margin-left: auto; color: #f5d17c; font-size: 28px; }
+@media (max-width: 760px) {
+  .egg-grid, .owned-eggs-grid { grid-template-columns: minmax(0, 1fr); }
+  .shop-balance { min-width: 112px; padding: 11px; }
+  .shop-balance > strong { font-size: 22px; }
+  .egg-card { grid-template-columns: 68px minmax(0, 1fr); padding: 12px; }
+  .egg-card-art { min-height: 80px; }
+  .egg-card-art span { font-size: 36px; }
+  .egg-card-buy { flex-wrap: wrap; }
+  .egg-card-buy .button { flex: 1; }
+  .owned-egg-card { align-items: flex-start; flex-wrap: wrap; }
+  .owned-egg-copy { flex-basis: calc(100% - 68px); }
+  .owned-egg-card .button { width: 100%; }
+  .shop-creature-row { align-items: flex-start; flex-wrap: wrap; }
+  .shop-creature-copy { flex-basis: calc(100% - 82px); }
+  .shop-creature-row > .button, .shop-creature-actions { width: 100%; }
+  .shop-creature-actions > .button { flex: 1; }
+  .hatch-result { align-items: flex-start; }
+  .hatch-result > .species-image, .hatch-result > .species-image--empty { flex-basis: 64px; width: 64px; height: 64px; }
+}

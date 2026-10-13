@@ -163,6 +163,9 @@ func (s *Store) spinGold(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 		if _, err := tx.ExecContext(ctx, `INSERT INTO player_creatures (owner_telegram_id, species_slug) VALUES ($1,$2)`, telegramID, creatureSlug); err != nil {
 			return SlotSpinResult{}, err
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO player_discovered_species (player_telegram_id, species_slug) VALUES ($1,$2) ON CONFLICT DO NOTHING`, telegramID, creatureSlug); err != nil {
+			return SlotSpinResult{}, err
+		}
 	}
 
 	message := "Мимо! Ставка сгорела. Крути ещё раз."
@@ -265,6 +268,9 @@ func (s *Store) spinCreature(ctx context.Context, telegramID, creatureID int64) 
 				return SlotSpinResult{}, err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO player_creatures (owner_telegram_id, species_slug) VALUES ($1,$2)`, telegramID, picked.slug); err != nil {
+				return SlotSpinResult{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO player_discovered_species (player_telegram_id, species_slug) VALUES ($1,$2) ON CONFLICT DO NOTHING`, telegramID, picked.slug); err != nil {
 				return SlotSpinResult{}, err
 			}
 			rewards = append(rewards, SlotCreatureReward{Slug: picked.slug, Name: picked.name})

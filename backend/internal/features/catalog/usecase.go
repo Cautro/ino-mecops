@@ -63,7 +63,7 @@ func (u *UseCase) CreateSpecies(ctx context.Context, input SpeciesInput) (Specie
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	input.ImageURL = strings.TrimSpace(input.ImageURL)
-	if !validSpeciesInput(input.Slug, input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, true) {
+	if input.SellPriceGold < 0 || input.SellPriceGold > 1_000_000_000 || !validSpeciesInput(input.Slug, input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, true) {
 		return Species{}, ErrInvalidInput
 	}
 	if err := u.ensureAbilityExists(ctx, input.AbilityID); err != nil {
@@ -75,7 +75,7 @@ func (u *UseCase) UpdateSpecies(ctx context.Context, id int64, input SpeciesUpda
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	input.ImageURL = strings.TrimSpace(input.ImageURL)
-	if id <= 0 || !validSpeciesInput("valid-slug", input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, false) {
+	if id <= 0 || input.SellPriceGold < 0 || input.SellPriceGold > 1_000_000_000 || !validSpeciesInput("valid-slug", input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, false) {
 		return Species{}, ErrInvalidInput
 	}
 	if err := u.ensureAbilityExists(ctx, input.AbilityID); err != nil {

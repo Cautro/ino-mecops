@@ -17,6 +17,7 @@ import (
 	"github.com/cautro/inomecops/backend/internal/features/catalog"
 	"github.com/cautro/inomecops/backend/internal/features/codes"
 	"github.com/cautro/inomecops/backend/internal/features/gameplay"
+	"github.com/cautro/inomecops/backend/internal/features/shop"
 	"github.com/cautro/inomecops/backend/internal/router"
 	"github.com/cautro/inomecops/backend/internal/telegram"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -62,6 +63,7 @@ func main() {
 	catalogUseCase := catalog.NewUseCase(catalogRepo)
 	catalogHandler := catalog.NewHandler(catalogUseCase, cfg.AdminIDs, cfg.UploadDir)
 	gameplayHandler := gameplay.NewHandler(db)
+	shopHandler := shop.NewHandler(db)
 
 	handler := router.New(router.Dependencies{
 		Auth:      authHandler,
@@ -69,6 +71,7 @@ func main() {
 		Admin:     adminHandler,
 		Catalog:   catalogHandler,
 		Gameplay:  gameplayHandler,
+		Shop:      shopHandler,
 		UploadDir: cfg.UploadDir,
 		DB:        db,
 		Log:       logger,
