@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, isDemoMode } from './api';
+import { APIError, api, isDemoMode } from './api';
 import type { Creature, Player, RedeemResult, Rarity, SlotSpinResult, Species } from './api';
 
 // ==================== Типы и константы ====================
@@ -269,7 +269,10 @@ export function App() {
       telegram?.HapticFeedback?.notificationOccurred(result.win_type === 'miss' ? 'warning' : 'success');
     } catch (error) {
       window.clearInterval(animationTimer);
-      setNotice({ kind: 'error', title: 'Прокрутка не состоялась', message: errorMessage(error) });
+      const message = error instanceof APIError && error.code === 'slot_failed'
+        ? 'Сервер не смог сохранить результат. Проверь, что миграция backend/migrations/005_slot_machine.sql применена к той базе PostgreSQL, которую использует backend. Если миграция уже применена, проверь журнал backend — там будет исходная ошибка. Незавершённая операция откатывается, поэтому баланс не меняется.'
+        : errorMessage(error);
+      setNotice({ kind: 'error', title: 'Не удалось завершить прокрутку', message });
       telegram?.HapticFeedback?.notificationOccurred('error');
     } finally {
       window.clearInterval(animationTimer);
@@ -347,7 +350,7 @@ export function App() {
           <>
             <section className="welcome-row">
               <div>
-                <p className="eyebrow">СЛОТ-МАШИНА И ОХОТА ЗА ДЖЕКПОТОМ</p>
+                <p className="eyebrow">ИГРОВОЙ БАРАБАН · СОБИРАЙ ИНОМЕКОНОВ</p>
                 <h1>Привет, {displayName.split(' ')[0]}.</h1>
                 <p className="page-lead">Крути барабан, забирай золото и выбивай новых иномеконов.</p>
               </div>
@@ -362,13 +365,13 @@ export function App() {
                 </div>
               </div>
             </section>
-            <section className="slot-layout" aria-label="Слот-машина">
+            <section className="slot-layout" aria-label="Барабан удачи">
               <article className="surface slot-machine">
                 <div className="slot-machine-heading">
                   <div>
-                    <p className="eyebrow">INOME JACKPOT</p>
-                    <h2>Слот-машина</h2>
-                    <p>Три одинаковых символа — крупная выплата. Три 🧬 — ещё и новый иномекон.</p>
+                    <p className="eyebrow">INOME · ИГРОВОЙ БАРАБАН</p>
+                    <h2>Барабан удачи</h2>
+                    <p>Совпадающие символы приносят золото. Три 🧬 — крупная награда и новый иномекон.</p>
                   </div>
                   <div className="slot-mini-balance">
                     <span>ТВОЁ ЗОЛОТО</span>
@@ -402,7 +405,7 @@ export function App() {
                       </div>
                     </>
                   ) : (
-                    <><span className="slot-result-icon">✦</span><span>Твой следующий джекпот начинается здесь.</span></>
+                    <><span className="slot-result-icon">✦</span><span>Пусть удача будет на твоей стороне.</span></>
                   )}
                 </div>
 
