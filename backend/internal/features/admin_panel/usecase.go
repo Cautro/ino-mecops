@@ -26,11 +26,11 @@ func NewUseCase(repo Repository) *UseCase {
 func rewardForPreset(preset string) (Reward, error) {
 	switch preset {
 	case "gold50":
-		return Reward{Gold: 50}, nil
+		return Reward{Name: "Золотой запас", Rarity: "Обычная", Gold: 50}, nil
 	case "gold500":
-		return Reward{Gold: 500}, nil
+		return Reward{Name: "Большой золотой запас", Rarity: "Редкая", Gold: 500}, nil
 	case "mecop150":
-		return Reward{Gold: 150, CreatureSlug: "ino-sprout"}, nil
+		return Reward{Name: "Набор иномекона", Rarity: "Эпическая", Gold: 150, CreatureSlug: "ino-sprout"}, nil
 	default:
 		return Reward{}, ErrInvalidBatch
 	}
@@ -41,10 +41,41 @@ func (u *UseCase) CreateBatch(ctx context.Context, createdBy int64, req CreateBa
 	if len(req.Label) < 1 || len(req.Label) > 100 || req.Count < 1 || req.Count > maxBatchSize || req.ExpiresInDays < 0 || req.ExpiresInDays > 365 {
 		return CreateBatchResponse{}, ErrInvalidBatch
 	}
-	reward, err := rewardForPreset(req.RewardPreset)
-	if err != nil {
-		return CreateBatchResponse{}, err
+
+	reward := Reward{
+		Name: strings.TrimSpace(req.RewardName), Rarity: strings.TrimSpace(req.RewardRarity),
+		Gold: req.RewardGold, CreatureSlug: strings.TrimSpace(req.RewardCreatureSlug),
 	}
+	// Compatibility path for older frontends that still submit a preset.
+	if reward.Gold == 0 && reward.CreatureSlug == "" && req.RewardPreset != "" {
+		var err error
+		reward, err = rewardForPreset(req.RewardPreset)
+		if err != nil {
+			return CreateBatchResponse{}, err
+		}
+	}
+	if reward.Name == "" {
+		reward.Name = "Пользовательская награда"
+	}
+	if reward.Rarity == "" {
+		reward.Rarity = "Обычная"
+	}
+	if len([]rune(reward.Name)) > 80 || len([]rune(reward.Rarity)) > 32 || reward.Gold < 0 || reward.Gold > 100_000_000 || (reward.Gold == 0 && reward.CreatureSlug == "") || strings.ContainsAny(reward.Rarity, "\r\n\x00") {
+		return CreateBatchResponse{}, ErrInvalidBatch
+	}
+	if reward.CreatureSlug != "" {
+		if len(reward.CreatureSlug) > 48 || !validSlug(reward.CreatureSlug) {
+			return CreateBatchResponse{}, ErrInvalidBatch
+		}
+		active, err := u.repo.ActiveSpeciesExists(ctx, reward.CreatureSlug)
+		if err != nil {
+			return CreateBatchResponse{}, err
+		}
+		if !active {
+			return CreateBatchResponse{}, ErrInvalidBatch
+		}
+	}
+
 	var expiresAt *time.Time
 	if req.ExpiresInDays > 0 {
 		t := time.Now().UTC().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
@@ -64,17 +95,39 @@ func (u *UseCase) CreateBatch(ctx context.Context, createdBy int64, req CreateBa
 	}
 
 	batchID, err := u.repo.CreateBatch(ctx, NewBatch{
-		Label: req.Label, RewardGold: reward.Gold, RewardCreatureSlug: reward.CreatureSlug,
+		Label: req.Label, RewardName: reward.Name, RewardRarity: reward.Rarity,
+		RewardGold: reward.Gold, RewardCreatureSlug: reward.CreatureSlug,
 		CreatedBy: createdBy, ExpiresAt: expiresAt, CodeHashes: hashes, CodeValues: rawCodes,
 	})
 	if err != nil {
 		return CreateBatchResponse{}, err
 	}
 	return CreateBatchResponse{
-		BatchID: batchID, Label: req.Label, Count: req.Count,
-		RewardGold: reward.Gold, RewardCreatureSlug: reward.CreatureSlug,
+		BatchID: batchID, Label: req.Label, Count: req.Count, RewardName: reward.Name,
+		RewardRarity: reward.Rarity, RewardGold: reward.Gold, RewardCreatureSlug: reward.CreatureSlug,
 		ExpiresAt: expiresAt, Codes: rawCodes,
 	}, nil
+}
+
+func validSlug(value string) bool {
+	if len(value) < 2 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	lastDash := false
+	for _, ch := range value {
+		if ch == '-' {
+			if lastDash {
+				return false
+			}
+			lastDash = true
+			continue
+		}
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') {
+			return false
+		}
+		lastDash = false
+	}
+	return true
 }
 
 func (u *UseCase) ListBatchCodes(ctx context.Context, batchID int64) (BatchCodesResponse, error) {

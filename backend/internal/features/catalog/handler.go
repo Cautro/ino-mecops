@@ -11,6 +11,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -234,13 +235,15 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 	}
 	ext := map[string]string{"png": ".png", "jpeg": ".jpg", "gif": ".gif"}[format]
 	if err := os.MkdirAll(h.uploadDir, 0755); err != nil {
-		services.WriteError(w, http.StatusInternalServerError, "upload_failed", "Не удалось подготовить каталог изображений.")
+		log.Printf("admin: create image upload directory %q: %v", h.uploadDir, err)
+		services.WriteError(w, http.StatusInternalServerError, "upload_failed", "Не удалось подготовить каталог изображений. Проверь UPLOAD_DIR и права пользователя сервиса.")
 		return
 	}
 	filename := hex.EncodeToString(randomName[:]) + ext
 	path := filepath.Join(h.uploadDir, filename)
 	if err := os.WriteFile(path, content, 0644); err != nil {
-		services.WriteError(w, http.StatusInternalServerError, "upload_failed", "Не удалось сохранить изображение.")
+		log.Printf("admin: save uploaded image %q: %v", path, err)
+		services.WriteError(w, http.StatusInternalServerError, "upload_failed", "Не удалось сохранить изображение. Проверь права пользователя сервиса на UPLOAD_DIR.")
 		return
 	}
 	services.WriteJSON(w, http.StatusCreated, map[string]any{"image_url": "/uploads/" + filename, "width": config.Width, "height": config.Height, "format": format})

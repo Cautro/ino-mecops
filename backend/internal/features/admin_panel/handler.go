@@ -2,6 +2,7 @@ package admin_panel
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ func (h *Handler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	batches, err := h.useCase.ListBatches(r.Context(), limit, offset)
 	if err != nil {
+		log.Printf("admin: list batches: %v", err)
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось получить список партий.")
 		return
 	}
@@ -63,9 +65,10 @@ func (h *Handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	result, err := h.useCase.CreateBatch(r.Context(), user.ID, request)
 	if err != nil {
 		if errors.Is(err, ErrInvalidBatch) {
-			services.WriteError(w, http.StatusBadRequest, "invalid_batch", "Проверьте label, count (1–500), reward_preset и expires_in_days (0–365).")
+			services.WriteError(w, http.StatusBadRequest, "invalid_batch", "Проверьте название партии, количество кодов, награду и срок действия. Укажите золото и/или активного иномекона; редкость — до 32 символов.")
 			return
 		}
+		log.Printf("admin: create batch: %v", err)
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось создать партию кодов.")
 		return
 	}
@@ -87,6 +90,7 @@ func (h *Handler) ListBatchCodes(w http.ResponseWriter, r *http.Request) {
 			services.WriteError(w, http.StatusNotFound, "batch_not_found", "Партия не найдена.")
 			return
 		}
+		log.Printf("admin: list batch codes id=%d: %v", id, err)
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось получить коды партии.")
 		return
 	}
@@ -107,6 +111,7 @@ func (h *Handler) RevokeBatch(w http.ResponseWriter, r *http.Request) {
 			services.WriteError(w, http.StatusNotFound, "batch_not_found", "Партия не найдена или уже отозвана.")
 			return
 		}
+		log.Printf("admin: revoke batch id=%d: %v", id, err)
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось отозвать партию.")
 		return
 	}
@@ -131,6 +136,7 @@ func (h *Handler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 			services.WriteError(w, http.StatusConflict, "batch_has_redemptions", "Нельзя удалить партию с активированными кодами. Отзови её, чтобы сохранить историю наград.")
 			return
 		}
+		log.Printf("admin: delete batch id=%d: %v", id, err)
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось удалить партию.")
 		return
 	}

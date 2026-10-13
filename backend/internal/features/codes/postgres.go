@@ -37,8 +37,8 @@ func (r *PostgresRepository) Redeem(ctx context.Context, telegramID int64, codeH
 		  AND c.revoked_at IS NULL
 		  AND b.revoked_at IS NULL
 		  AND (b.expires_at IS NULL OR b.expires_at > now())
-		RETURNING c.id, b.reward_gold, b.reward_creature_slug, c.redeemed_at
-	`, telegramID, codeHash).Scan(&result.CodeID, &result.GoldAdded, &creature, &redeemedAt)
+		RETURNING c.id, b.reward_gold, b.reward_creature_slug, b.reward_name, b.reward_rarity, c.redeemed_at
+	`, telegramID, codeHash).Scan(&result.CodeID, &result.GoldAdded, &creature, &result.RewardName, &result.RewardRarity, &redeemedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RedeemResult{}, ErrInvalidCode
 	}
@@ -46,17 +46,21 @@ func (r *PostgresRepository) Redeem(ctx context.Context, telegramID int64, codeH
 		return RedeemResult{}, err
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE players SET gold = gold + $2, updated_at = now() WHERE telegram_id = $1
-	`, telegramID, result.GoldAdded); err != nil {
-		return RedeemResult{}, err
-	}
+	// Creature-only rewards are valid. wallet_transactions forbids zero deltas,
+	// so only update the balance and write a ledger row when gold is awarded.
+	if result.GoldAdded > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE players SET gold = gold + $2, updated_at = now() WHERE telegram_id = $1
+		`, telegramID, result.GoldAdded); err != nil {
+			return RedeemResult{}, err
+		}
 
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO wallet_transactions (player_telegram_id, delta_gold, transaction_type, promo_code_id)
-		VALUES ($1, $2, 'code_reward', $3)
-	`, telegramID, result.GoldAdded, result.CodeID); err != nil {
-		return RedeemResult{}, err
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO wallet_transactions (player_telegram_id, delta_gold, transaction_type, promo_code_id)
+			VALUES ($1, $2, 'code_reward', $3)
+		`, telegramID, result.GoldAdded, result.CodeID); err != nil {
+			return RedeemResult{}, err
+		}
 	}
 
 	if creature.Valid && creature.String != "" {

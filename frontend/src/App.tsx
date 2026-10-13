@@ -212,12 +212,14 @@ export function App() {
         setPlayer((previous) => (previous ? { ...previous, gold: result.gold_balance } : previous));
         const creatureResponse = await api.creatures(initData);
         setOwnedCreatures(creatureResponse.items ?? []);
+        const awarded = [
+          result.gold_added > 0 ? `${formatNumber(result.gold_added)} золота` : '',
+          result.creature_slug ? `новый иномекон: ${creatureName(result.creature_slug)}` : '',
+        ].filter(Boolean).join(' и ');
         setNotice({
           kind: 'success',
           title: 'Карточка активирована',
-          message: `Получено ${formatNumber(result.gold_added)} золота${
-            result.creature_slug ? ` и новый иномекон: ${creatureName(result.creature_slug)}` : ''
-          }.`,
+          message: `${result.reward_name ? `Награда «${result.reward_name}»${result.reward_rarity ? ` · ${result.reward_rarity}` : ''}. ` : ''}Получено: ${awarded || 'награда активирована'}.`,
         });
         telegram?.HapticFeedback?.notificationOccurred('success');
       } catch (error) {
@@ -573,8 +575,10 @@ export function App() {
                     <div>
                       <strong>Награда получена</strong>
                       <span>
-                        +{formatNumber(redeemResult.gold_added)} золота
-                        {redeemResult.creature_slug ? ` · ${creatureName(redeemResult.creature_slug)}` : ''}
+                        {redeemResult.reward_name ? `${redeemResult.reward_name}${redeemResult.reward_rarity ? ` · ${redeemResult.reward_rarity}` : ''} — ` : ''}
+                        {redeemResult.gold_added > 0 ? `+${formatNumber(redeemResult.gold_added)} золота` : ''}
+                        {redeemResult.gold_added > 0 && redeemResult.creature_slug ? ' · ' : ''}
+                        {redeemResult.creature_slug ? creatureName(redeemResult.creature_slug) : ''}
                       </span>
                     </div>
                   </div>

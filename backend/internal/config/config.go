@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -30,7 +31,16 @@ func Load() (Config, error) {
 		cfg.Port = "8080"
 	}
 	if cfg.UploadDir == "" {
-		cfg.UploadDir = "./uploads"
+		cfg.UploadDir = "/var/lib/inomecops/uploads"
+	} else if !filepath.IsAbs(cfg.UploadDir) {
+		// systemd does not guarantee a working directory; resolve relative paths
+		// against the deployment root next to /bin/inomecops.
+		if executable, err := os.Executable(); err == nil {
+			appRoot := filepath.Dir(filepath.Dir(executable))
+			cfg.UploadDir = filepath.Join(appRoot, cfg.UploadDir)
+		} else if absolute, err := filepath.Abs(cfg.UploadDir); err == nil {
+			cfg.UploadDir = absolute
+		}
 	}
 	if _, err := strconv.Atoi(cfg.Port); err != nil {
 		return Config{}, fmt.Errorf("PORT must be a number: %w", err)

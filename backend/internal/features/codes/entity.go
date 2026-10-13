@@ -8,6 +8,8 @@ type RedeemRequest struct {
 
 type RedeemResult struct {
 	CodeID       int64
+	RewardName   string    `json:"reward_name,omitempty"`
+	RewardRarity string    `json:"reward_rarity,omitempty"`
 	GoldAdded    int64     `json:"gold_added"`
 	GoldBalance  int64     `json:"gold_balance"`
 	CreatureSlug string    `json:"creature_slug,omitempty"`

@@ -31,10 +31,10 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch NewBatch) (i
 	}
 	var id int64
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO code_batches (label, reward_gold, reward_creature_slug, created_by, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO code_batches (label, reward_gold, reward_creature_slug, reward_name, reward_rarity, created_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
-	`, batch.Label, batch.RewardGold, creature, batch.CreatedBy, batch.ExpiresAt).Scan(&id)
+	`, batch.Label, batch.RewardGold, creature, batch.RewardName, batch.RewardRarity, batch.CreatedBy, batch.ExpiresAt).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -59,6 +59,12 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch NewBatch) (i
 		return 0, err
 	}
 	return id, nil
+}
+
+func (r *PostgresRepository) ActiveSpeciesExists(ctx context.Context, slug string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM creature_species WHERE slug = $1 AND is_active = TRUE)`, slug).Scan(&exists)
+	return exists, err
 }
 
 func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) ([]BatchCode, error) {
@@ -93,14 +99,20 @@ func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) 
 		return nil, err
 	}
 	if len(codes) == 0 {
-		return nil, ErrBatchNotFound
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM code_batches WHERE id = $1)`, batchID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, ErrBatchNotFound
+		}
 	}
 	return codes, nil
 }
 
 func (r *PostgresRepository) ListBatches(ctx context.Context, limit, offset int) ([]BatchSummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT b.id, b.label, b.reward_gold, b.reward_creature_slug, b.created_by,
+		SELECT b.id, b.label, b.reward_name, b.reward_rarity, b.reward_gold, b.reward_creature_slug, b.created_by,
 		       b.created_at, b.expires_at, b.revoked_at,
 		       COUNT(c.id) AS code_count,
 		       COUNT(c.redeemed_at) AS redeemed_count
@@ -121,7 +133,7 @@ func (r *PostgresRepository) ListBatches(ctx context.Context, limit, offset int)
 		var creature sql.NullString
 		var expiresAt, revokedAt sql.NullTime
 		if err := rows.Scan(
-			&batch.ID, &batch.Label, &batch.RewardGold, &creature, &batch.CreatedBy,
+			&batch.ID, &batch.Label, &batch.RewardName, &batch.RewardRarity, &batch.RewardGold, &creature, &batch.CreatedBy,
 			&batch.CreatedAt, &expiresAt, &revokedAt, &batch.CodeCount, &batch.RedeemedCount,
 		); err != nil {
 			return nil, err

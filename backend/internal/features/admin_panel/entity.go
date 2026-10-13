@@ -2,20 +2,30 @@ package admin_panel
 
 import "time"
 
+// CreateBatchRequest supports custom rewards. RewardPreset is retained for
+// compatibility with the first version of the admin frontend.
 type CreateBatchRequest struct {
-	Label         string `json:"label"`
-	Count         int    `json:"count"`
-	RewardPreset  string `json:"reward_preset"`
-	ExpiresInDays int    `json:"expires_in_days"`
+	Label              string `json:"label"`
+	Count              int    `json:"count"`
+	RewardGold         int64  `json:"reward_gold"`
+	RewardCreatureSlug string `json:"reward_creature_slug"`
+	RewardName         string `json:"reward_name"`
+	RewardRarity       string `json:"reward_rarity"`
+	RewardPreset       string `json:"reward_preset"`
+	ExpiresInDays      int    `json:"expires_in_days"`
 }
 
 type Reward struct {
+	Name         string
+	Rarity       string
 	Gold         int64
 	CreatureSlug string
 }
 
 type NewBatch struct {
 	Label              string
+	RewardName         string
+	RewardRarity       string
 	RewardGold         int64
 	RewardCreatureSlug string
 	CreatedBy          int64
@@ -38,6 +48,8 @@ type BatchCodesResponse struct {
 type BatchSummary struct {
 	ID                 int64      `json:"id"`
 	Label              string     `json:"label"`
+	RewardName         string     `json:"reward_name"`
+	RewardRarity       string     `json:"reward_rarity"`
 	RewardGold         int64      `json:"reward_gold"`
 	RewardCreatureSlug string     `json:"reward_creature_slug,omitempty"`
 	CreatedBy          int64      `json:"created_by"`
@@ -52,6 +64,8 @@ type CreateBatchResponse struct {
 	BatchID            int64      `json:"batch_id"`
 	Label              string     `json:"label"`
 	Count              int        `json:"count"`
+	RewardName         string     `json:"reward_name"`
+	RewardRarity       string     `json:"reward_rarity"`
 	RewardGold         int64      `json:"reward_gold"`
 	RewardCreatureSlug string     `json:"reward_creature_slug,omitempty"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`

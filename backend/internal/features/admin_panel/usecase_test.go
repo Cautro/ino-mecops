@@ -53,3 +53,18 @@ func TestGenerateCodeFormatAndUniqueness(t *testing.T) {
 		seen[code] = struct{}{}
 	}
 }
+
+func TestValidSlug(t *testing.T) {
+	valid := []string{"ino-sprout", "event-reward-2026", "creature42"}
+	for _, value := range valid {
+		if !validSlug(value) {
+			t.Errorf("validSlug(%q) = false, want true", value)
+		}
+	}
+	invalid := []string{"", "a", "-start", "end-", "two--dashes", "Upper-case", "with space", "кириллица"}
+	for _, value := range invalid {
+		if validSlug(value) {
+			t.Errorf("validSlug(%q) = true, want false", value)
+		}
+	}
+}

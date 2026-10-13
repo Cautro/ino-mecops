@@ -77,6 +77,8 @@ export type AbilityUpdateInput = Omit<AbilityInput, 'slug'>;
 // ==================== Типы промокодов и батчей ====================
 
 export type RedeemResult = {
+  reward_name?: string;
+  reward_rarity?: string;
   gold_added: number;
   gold_balance: number;
   creature_slug?: string;
@@ -114,6 +116,8 @@ export type SlotSpinResult = {
 export type Batch = {
   id: number;
   label: string;
+  reward_name: string;
+  reward_rarity: string;
   reward_gold: number;
   reward_creature_slug?: string;
   created_by: number;
@@ -128,6 +132,8 @@ export type CreatedBatch = {
   batch_id: number;
   label: string;
   count: number;
+  reward_name: string;
+  reward_rarity: string;
   reward_gold: number;
   reward_creature_slug?: string;
   expires_at?: string;
@@ -143,7 +149,10 @@ export type BatchCodesResponse = {
 export type CreateBatchInput = {
   label: string;
   count: number;
-  reward_preset: 'gold50' | 'gold500' | 'mecop150';
+  reward_name: string;
+  reward_rarity: string;
+  reward_gold: number;
+  reward_creature_slug?: string;
   expires_in_days: number;
 };
 
@@ -165,6 +174,8 @@ let demoBatches: Batch[] = [
   {
     id: 1,
     label: 'Тестовая партия',
+    reward_name: 'Золотой запас',
+    reward_rarity: 'Обычная',
     reward_gold: 50,
     created_by: 100000001,
     created_at: new Date(Date.now() - 86_400_000).toISOString(),
@@ -496,6 +507,8 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       demoCreatures = [...demoCreatures, { id: Date.now(), species_slug: creatureSlug, obtained_at: new Date().toISOString() }];
     }
     return {
+      reward_name: creatureSlug ? 'Набор иномекона' : `Золотой запас · ${goldAdded}`,
+      reward_rarity: creatureSlug ? 'Эпическая' : (goldAdded >= 500 ? 'Редкая' : 'Обычная'),
       gold_added: goldAdded,
       gold_balance: demoGold,
       creature_slug: creatureSlug,
@@ -507,13 +520,21 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
 
   if (path === '/api/v1/admin/code-batches' && options.method === 'POST') {
     const payload = options.body as CreateBatchInput;
-    const rewardGold = payload.reward_preset === 'gold500' ? 500 : payload.reward_preset === 'mecop150' ? 150 : 50;
-    const creature = payload.reward_preset === 'mecop150' ? 'ino-sprout' : undefined;
+    const rewardGold = Math.max(0, Math.trunc(payload.reward_gold ?? 0));
+    const creature = payload.reward_creature_slug || undefined;
+    if (rewardGold === 0 && !creature) throw new APIError('Добавь золото и/или выбери иномекона.', 422);
+    if (creature && !demoSpecies.some((item) => item.slug === creature && item.is_active)) {
+      throw new APIError('Выбранный иномекон не найден в активном каталоге.', 422);
+    }
+    const rewardName = payload.reward_name.trim() || 'Пользовательская награда';
+    const rewardRarity = payload.reward_rarity.trim() || 'Обычная';
     const codes = Array.from({ length: payload.count }, (_, i) => `INOME-DEMO-${demoBatchID}-${String(i + 1).padStart(3, '0')}`);
 
     const batch: Batch = {
       id: demoBatchID++,
       label: payload.label,
+      reward_name: rewardName,
+      reward_rarity: rewardRarity,
       reward_gold: rewardGold,
       reward_creature_slug: creature,
       created_by: 100000001,
@@ -530,6 +551,8 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       batch_id: batch.id,
       label: batch.label,
       count: payload.count,
+      reward_name: rewardName,
+      reward_rarity: rewardRarity,
       reward_gold: rewardGold,
       reward_creature_slug: creature,
       expires_at: batch.expires_at,
