@@ -54,6 +54,10 @@ func (u *UseCase) DeleteAbility(ctx context.Context, id int64) error {
 	}
 	return u.repo.DeleteAbility(ctx, id)
 }
+func (u *UseCase) ListCollectionSpecies(ctx context.Context, ownerTelegramID int64) ([]CollectionSpecies, error) {
+	return u.repo.ListCollectionSpecies(ctx, ownerTelegramID)
+}
+
 func (u *UseCase) CreateSpecies(ctx context.Context, input SpeciesInput) (Species, error) {
 	input.Slug = strings.TrimSpace(strings.ToLower(input.Slug))
 	input.Name = strings.TrimSpace(input.Name)

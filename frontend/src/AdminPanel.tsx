@@ -60,7 +60,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     setLoading(true); setError('');
     try {
       const [speciesResponse, batchResponse] = await Promise.all([
-        api.listSpecies(initData, true), api.listBatches(initData),
+        api.listAdminSpecies(initData), api.listBatches(initData),
       ]);
       const loadedSpecies = speciesResponse.items ?? [];
       setSpecies(loadedSpecies);

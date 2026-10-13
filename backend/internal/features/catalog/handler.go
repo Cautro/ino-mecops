@@ -131,11 +131,12 @@ func (h *Handler) ListAdminSpecies(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListPublicSpecies(w http.ResponseWriter, r *http.Request) {
-	if _, ok := auth.IdentityFromContext(r.Context()); !ok {
+	user, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
 		services.WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация.")
 		return
 	}
-	items, err := h.useCase.ListSpecies(r.Context(), false)
+	items, err := h.useCase.ListCollectionSpecies(r.Context(), user.ID)
 	if err != nil {
 		services.WriteError(w, http.StatusInternalServerError, "internal_error", "Не удалось загрузить каталог.")
 		return

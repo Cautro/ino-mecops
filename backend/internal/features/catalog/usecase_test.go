@@ -1,6 +1,10 @@
 package catalog
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestValidateAbilityInput(t *testing.T) {
 	tests := []struct {
@@ -39,5 +43,33 @@ func TestValidImageURL(t *testing.T) {
 		if got := validImageURL(test.value); got != test.want {
 			t.Errorf("validImageURL(%q) = %v, want %v", test.value, got, test.want)
 		}
+	}
+}
+
+func TestCollectionSpeciesOmitsUndiscoveredData(t *testing.T) {
+	item := Species{ID: 99, Slug: "secret-species", Name: "Секретный иномекон", Description: "Скрытая запись", ImageURL: "/uploads/secret.png", Rarity: "mythic", PassiveGoldPerHour: 900, Health: 500, Damage: 250, CritChance: 99, AbilityID: 7, AbilityName: "Тайная способность", AbilitySlug: "secret-ability"}
+	locked := collectionSpecies(item, false)
+	if !locked.Locked || locked.ID != item.ID {
+		t.Fatalf("locked catalogue card should expose only its stable id and lock state: %#v", locked)
+	}
+	encoded, err := json.Marshal(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, privateValue := range []string{"secret-species", "Секретный иномекон", "/uploads/secret.png", "Тайная способность", "500", "250"} {
+		if strings.Contains(string(encoded), privateValue) {
+			t.Errorf("locked catalogue JSON leaked %q: %s", privateValue, encoded)
+		}
+	}
+	if !strings.Contains(string(encoded), `"locked":true`) {
+		t.Errorf("locked state missing from JSON: %s", encoded)
+	}
+}
+
+func TestCollectionSpeciesIncludesOwnedData(t *testing.T) {
+	item := Species{ID: 12, Slug: "known-one", Name: "Знакомый иномекон", Health: 100}
+	card := collectionSpecies(item, true)
+	if card.Locked || card.Slug == nil || *card.Slug != item.Slug || card.Name == nil || *card.Name != item.Name || card.Health == nil || *card.Health != item.Health {
+		t.Fatalf("owned species should reveal full catalogue data: %#v", card)
 	}
 }

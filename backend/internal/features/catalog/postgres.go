@@ -122,6 +122,41 @@ func (r *PostgresRepository) ListSpecies(ctx context.Context, includeArchived bo
 	return items, rows.Err()
 }
 
+// ListCollectionSpecies returns every active species plus any archived species
+// the player already owns. Unowned entries are reduced to an opaque catalogue
+// ID and locked flag; the name, slug, image and stats never leave the server.
+func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTelegramID int64) ([]CollectionSpecies, error) {
+	query := `SELECT s.id, s.slug, s.name, s.description, s.image_url, s.rarity, s.passive_gold_per_hour,
+		s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at,
+		EXISTS (SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug) AS is_owned
+		FROM creature_species s
+		JOIN abilities a ON a.id = s.ability_id
+		WHERE s.is_active = TRUE OR EXISTS (
+			SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug
+		)
+		ORDER BY s.updated_at DESC, s.id DESC`
+	rows, err := r.db.QueryContext(ctx, query, ownerTelegramID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]CollectionSpecies, 0)
+	for rows.Next() {
+		var item Species
+		var owned bool
+		if err := rows.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.Rarity, &item.PassiveGoldPerHour,
+			&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &owned); err != nil {
+			return nil, err
+		}
+		items = append(items, collectionSpecies(item, owned))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *PostgresRepository) CreateSpecies(ctx context.Context, input SpeciesInput) (Species, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx, `

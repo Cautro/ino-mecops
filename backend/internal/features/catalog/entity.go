@@ -63,6 +63,46 @@ type Species struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+// CollectionSpecies is the player-facing collection entry. For undiscovered
+// species, only ID and Locked are serialized; the private fields stay nil so
+// encoding/json omits them rather than exposing secrets to the browser.
+type CollectionSpecies struct {
+	ID                 int64    `json:"id"`
+	Locked             bool     `json:"locked"`
+	Slug               *string  `json:"slug,omitempty"`
+	Name               *string  `json:"name,omitempty"`
+	Description        *string  `json:"description,omitempty"`
+	ImageURL           *string  `json:"image_url,omitempty"`
+	Rarity             *string  `json:"rarity,omitempty"`
+	PassiveGoldPerHour *int64   `json:"passive_gold_per_hour,omitempty"`
+	Health             *int     `json:"health,omitempty"`
+	Damage             *int     `json:"damage,omitempty"`
+	CritChance         *float64 `json:"crit_chance,omitempty"`
+	AbilityID          *int64   `json:"ability_id,omitempty"`
+	AbilityName        *string  `json:"ability_name,omitempty"`
+	AbilitySlug        *string  `json:"ability_slug,omitempty"`
+}
+
+func collectionSpecies(item Species, owned bool) CollectionSpecies {
+	card := CollectionSpecies{ID: item.ID, Locked: !owned}
+	if !owned {
+		return card
+	}
+	card.Slug = &item.Slug
+	card.Name = &item.Name
+	card.Description = &item.Description
+	card.ImageURL = &item.ImageURL
+	card.Rarity = &item.Rarity
+	card.PassiveGoldPerHour = &item.PassiveGoldPerHour
+	card.Health = &item.Health
+	card.Damage = &item.Damage
+	card.CritChance = &item.CritChance
+	card.AbilityID = &item.AbilityID
+	card.AbilityName = &item.AbilityName
+	card.AbilitySlug = &item.AbilitySlug
+	return card
+}
+
 type SpeciesInput struct {
 	Slug               string  `json:"slug"`
 	Name               string  `json:"name"`

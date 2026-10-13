@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
 import AdminPanel from './AdminPanel';
-import type { Creature, Player, RedeemResult, Rarity, SlotSpinRequest, SlotSpinResult, Species } from './api';
+import type { CollectionSpecies, Creature, Player, RedeemResult, Rarity, SlotSpinRequest, SlotSpinResult } from './api';
 
 // ==================== Типы и константы ====================
 
@@ -106,7 +106,7 @@ export function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [player, setPlayer] = useState<Player | null>(null);
   const [ownedCreatures, setOwnedCreatures] = useState<Creature[]>([]);
-  const [species, setSpecies] = useState<Species[]>([]);
+  const [species, setSpecies] = useState<CollectionSpecies[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -121,6 +121,7 @@ export function App() {
   const [slotReels, setSlotReels] = useState<[string, string, string]>(['🍒', '💎', '🧬']);
   const [slotRolling, setSlotRolling] = useState(false);
   const [slotResult, setSlotResult] = useState<SlotSpinResult | null>(null);
+  const [selectedSpeciesID, setSelectedSpeciesID] = useState<number | null>(null);
 
 
 
@@ -128,7 +129,30 @@ export function App() {
   const inTelegram = Boolean(telegram && initData);
   const canOpen = demoMode || inTelegram;
   const displayName = player?.first_name || telegram?.initDataUnsafe.user?.first_name || 'Игрок';
-  const currentSpecies = useMemo(() => new Map(species.map((item) => [item.slug, item])), [species]);
+  const currentSpecies = useMemo(
+    () => new Map(species.flatMap((item) => item.slug ? [[item.slug, item] as [string, CollectionSpecies]] : [])),
+    [species]
+  );
+  const ownedSpeciesCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const creature of ownedCreatures) counts.set(creature.species_slug, (counts.get(creature.species_slug) ?? 0) + 1);
+    return counts;
+  }, [ownedCreatures]);
+  const selectedSpecies = useMemo(
+    () => (selectedSpeciesID === null ? undefined : species.find((item) => item.id === selectedSpeciesID)),
+    [species, selectedSpeciesID]
+  );
+  const discoveredSpeciesCount = useMemo(() => species.filter((item) => !item.locked).length, [species]);
+
+  useEffect(() => {
+    if (!selectedSpecies) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedSpeciesID(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [selectedSpecies]);
+
   const selectedSlotCreature = useMemo(
     () => (slotCreatureID === '' ? undefined : ownedCreatures.find((item) => item.id === slotCreatureID)),
     [ownedCreatures, slotCreatureID]
@@ -153,14 +177,14 @@ export function App() {
         });
       }
       try {
-        const catalog = await api.listSpecies(initData, false);
+        const catalog = await api.collectionCatalog(initData);
         setSpecies(catalog.items ?? []);
       } catch {
         /* The player's profile remains available if public catalog is temporarily unavailable. */
       }
       try {
         // The backend is the authority: non-admin users receive 403 and won't see this tab.
-        await api.listSpecies(initData, true);
+        await api.listAdminSpecies(initData);
         setIsAdmin(true);
       } catch {
         setIsAdmin(false);
@@ -210,8 +234,12 @@ export function App() {
         setRedeemResult(result);
         setCode('');
         setPlayer((previous) => (previous ? { ...previous, gold: result.gold_balance } : previous));
-        const creatureResponse = await api.creatures(initData);
+        const [creatureResponse, catalogueResponse] = await Promise.all([
+          api.creatures(initData),
+          api.collectionCatalog(initData),
+        ]);
         setOwnedCreatures(creatureResponse.items ?? []);
+        setSpecies(catalogueResponse.items ?? []);
         const awarded = [
           result.gold_added > 0 ? `${formatNumber(result.gold_added)} золота` : '',
           result.creature_slug ? `новый иномекон: ${creatureName(result.creature_slug)}` : '',
@@ -292,10 +320,11 @@ export function App() {
           : previous
       );
       // Refresh inventory after every spin: an item stake may be lost or award new creatures.
-      void Promise.all([api.me(initData), api.creatures(initData)])
-        .then(([freshPlayer, freshCreatures]) => {
+      void Promise.all([api.me(initData), api.creatures(initData), api.collectionCatalog(initData)])
+        .then(([freshPlayer, freshCreatures, freshCatalogue]) => {
           setPlayer(freshPlayer);
           setOwnedCreatures(freshCreatures.items ?? []);
+          setSpecies(freshCatalogue.items ?? []);
         })
         .catch(() => undefined);
       telegram?.HapticFeedback?.notificationOccurred(result.win_type === 'miss' ? 'warning' : 'success');
@@ -633,37 +662,52 @@ export function App() {
           <section className="subpage">
             <div className="subpage-heading">
               <div>
-                <p className="eyebrow">МОИ НАХОДКИ</p>
+                <p className="eyebrow">ИССЛЕДУЙ КАТАЛОГ</p>
                 <h1>Коллекция</h1>
-                <p className="page-lead">Все полученные иномеконы — в одном месте.</p>
+                <p className="page-lead">Открывай новых иномеконов. Неизвестные виды скрывают имя, изображение и характеристики.</p>
               </div>
-              <span className="count-pill">{ownedCreatures.length} существ</span>
+              <span className="count-pill">{discoveredSpeciesCount} / {species.length} открыто</span>
             </div>
-            {ownedCreatures.length ? (
-              <div className="species-grid">
-                {ownedCreatures.map((owned) => {
-                  const item = currentSpecies.get(owned.species_slug);
+            {species.length ? (
+              <div className="species-grid species-grid--catalog">
+                {species.map((entry) => {
+                  const locked = entry.locked || !entry.slug;
+                  const ownedCount = entry.slug ? (ownedSpeciesCounts.get(entry.slug) ?? 0) : 0;
+                  const rarityLabel = entry.rarity
+                    ? (RARITIES.find((rarity) => rarity.value === entry.rarity)?.label ?? 'Неизвестная')
+                    : 'Неизвестно';
                   return (
-                    <article className="species-card" key={owned.id}>
-                      <ImagePreview
-                        src={item?.image_url ?? ''}
-                        name={item?.name ?? creatureName(owned.species_slug)}
-                      />
-                      <div className="species-info">
-                        <h3>{item?.name ?? creatureName(owned.species_slug)}</h3>
-                        <span>
-                          {item ? RARITIES.find((rarity) => rarity.value === item.rarity)?.label : 'Иномекон'}
-                        </span>
-                        <small>Получен {formatDate(owned.obtained_at)}</small>
+                    <button
+                      className={`species-card species-card--catalog${locked ? ' is-locked' : ''}`}
+                      key={entry.id}
+                      type="button"
+                      onClick={() => setSelectedSpeciesID(entry.id)}
+                      aria-label={locked ? 'Открыть закрытую карточку иномекона' : `Характеристики: ${entry.name}`}
+                    >
+                      <div className={`species-card-art${locked ? ' species-card-art--locked' : ''}`}>
+                        {locked ? (
+                          <>
+                            <span className="species-lock-icon" aria-hidden="true">🔒</span>
+                            <small>ДАННЫЕ ЗАКРЫТЫ</small>
+                          </>
+                        ) : (
+                          <ImagePreview src={entry.image_url ?? ''} name={entry.name ?? 'Иномекон'} />
+                        )}
                       </div>
-                    </article>
+                      <div className="species-info">
+                        <h3>{locked ? '???' : entry.name}</h3>
+                        <span>{locked ? 'Неизвестный вид' : rarityLabel}</span>
+                        <small>{locked ? 'Найди, чтобы открыть' : ownedCount > 1 ? `В коллекции: ${ownedCount}` : 'Открыто · нажми для деталей'}</small>
+                      </div>
+                      <span className="species-card-open" aria-hidden="true">↗</span>
+                    </button>
                   );
                 })}
               </div>
             ) : (
               <div className="empty-state">
-                <h2>Коллекция пуста</h2>
-                <p>Активируй коды с карточек, чтобы пополнять команду.</p>
+                <h2>Каталог пока пуст</h2>
+                <p>Когда в игре появятся новые виды иномеконов, они отобразятся здесь.</p>
               </div>
             )}
           </section>
@@ -673,12 +717,54 @@ export function App() {
           <AdminPanel
             initData={initData}
             onCatalogChanged={async () => {
-              const catalog = await api.listSpecies(initData, false);
+              const catalog = await api.collectionCatalog(initData);
               setSpecies(catalog.items ?? []);
             }}
           />
         )}
       </main>
+      {selectedSpecies && (
+        <div className="creature-modal-backdrop" role="presentation" onClick={() => setSelectedSpeciesID(null)}>
+          <section
+            className={`creature-modal${selectedSpecies.locked ? ' creature-modal--locked' : ''}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="creature-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button className="creature-modal-close" type="button" onClick={() => setSelectedSpeciesID(null)} aria-label="Закрыть">×</button>
+            {selectedSpecies.locked || !selectedSpecies.slug ? (
+              <>
+                <div className="creature-modal-locked-art" aria-hidden="true"><span>🔒</span></div>
+                <p className="eyebrow">ЗАПИСЬ ЗАШИФРОВАНА</p>
+                <h2 id="creature-modal-title">Неизвестный иномекон</h2>
+                <p className="creature-modal-copy">Имя, изображение и характеристики пока скрыты. Найди этого иномекона, чтобы открыть его запись в каталоге.</p>
+                <div className="locked-data-lines" aria-hidden="true"><span /><span /><span /></div>
+              </>
+            ) : (
+              <>
+                <div className="creature-modal-hero">
+                  <ImagePreview src={selectedSpecies.image_url ?? ''} name={selectedSpecies.name ?? 'Иномекон'} />
+                  <div>
+                    <p className="eyebrow">ЗАПИСЬ ОТКРЫТА</p>
+                    <h2 id="creature-modal-title">{selectedSpecies.name}</h2>
+                    <span className="creature-rarity">{selectedSpecies.rarity ? (RARITIES.find((rarity) => rarity.value === selectedSpecies.rarity)?.label ?? selectedSpecies.rarity) : 'Иномекон'}</span>
+                  </div>
+                </div>
+                {selectedSpecies.description && <p className="creature-modal-copy">{selectedSpecies.description}</p>}
+                <div className="creature-stats-grid">
+                  <div className="creature-stat"><span>Пассивный доход</span><strong>+{formatNumber(selectedSpecies.passive_gold_per_hour ?? 0)} <small>золота/ч</small></strong></div>
+                  <div className="creature-stat"><span>Здоровье</span><strong>{formatNumber(selectedSpecies.health ?? 0)}</strong></div>
+                  <div className="creature-stat"><span>Урон</span><strong>{formatNumber(selectedSpecies.damage ?? 0)}</strong></div>
+                  <div className="creature-stat"><span>Шанс крит. удара</span><strong>{formatNumber(selectedSpecies.crit_chance ?? 0)}%</strong></div>
+                  <div className="creature-stat creature-stat--wide"><span>Способность</span><strong>{selectedSpecies.ability_name ?? 'Не указана'}</strong></div>
+                </div>
+                <p className="creature-modal-footnote">Характеристики этого вида открыты в твоём каталоге.</p>
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

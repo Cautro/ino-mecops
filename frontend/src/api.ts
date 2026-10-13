@@ -20,6 +20,23 @@ export type Creature = {
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
 
+export type CollectionSpecies = {
+  id: number;
+  locked: boolean;
+  slug?: string;
+  name?: string;
+  description?: string;
+  image_url?: string;
+  rarity?: Rarity;
+  passive_gold_per_hour?: number;
+  health?: number;
+  damage?: number;
+  crit_chance?: number;
+  ability_id?: number;
+  ability_name?: string;
+  ability_slug?: string;
+};
+
 export type Species = {
   id: number;
   slug: string;
@@ -185,7 +202,7 @@ let demoBatches: Batch[] = [
 ];
 
 let demoBatchID = 2;
-let demoSpeciesID = 2;
+let demoSpeciesID = 4;
 
 let demoSpecies: Species[] = [
   {
@@ -199,6 +216,42 @@ let demoSpecies: Species[] = [
     health: 100,
     damage: 10,
     crit_chance: 5,
+    ability_id: 1,
+    ability_name: 'Искра',
+    ability_slug: 'spark',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 2,
+    slug: 'voltik',
+    name: 'Вольтик',
+    description: 'Маленький биоэлектрический проказник с кристальными усиками.',
+    image_url: '',
+    rarity: 'rare',
+    passive_gold_per_hour: 12,
+    health: 85,
+    damage: 18,
+    crit_chance: 9,
+    ability_id: 1,
+    ability_name: 'Искра',
+    ability_slug: 'spark',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 3,
+    slug: 'mossbyte',
+    name: 'Моссбайт',
+    description: 'Живой минерал с мхом на голове и светящимися глазами.',
+    image_url: '',
+    rarity: 'epic',
+    passive_gold_per_hour: 25,
+    health: 160,
+    damage: 12,
+    crit_chance: 4,
     ability_id: 1,
     ability_name: 'Искра',
     ability_slug: 'spark',
@@ -297,8 +350,10 @@ export const api = {
   deleteBatch: (initData: string, id: number) =>
     request<{ ok: boolean; batch_id: number }>(`/api/v1/admin/code-batches/${id}`, initData, { method: 'DELETE' }),
 
-  listSpecies: (initData: string, admin = true) =>
-    request<{ items: Species[] }>(admin ? '/api/v1/admin/creatures' : '/api/v1/catalog/creatures', initData),
+  listAdminSpecies: (initData: string) =>
+    request<{ items: Species[] }>('/api/v1/admin/creatures', initData),
+  collectionCatalog: (initData: string) =>
+    request<{ items: CollectionSpecies[] }>('/api/v1/catalog/creatures', initData),
 
   listAbilities: (initData: string) => request<{ items: Ability[] }>('/api/v1/admin/abilities', initData),
   createAbility: (initData: string, payload: AbilityInput) =>
@@ -624,7 +679,11 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
 
   if (path === '/api/v1/admin/creatures' || path === '/api/v1/catalog/creatures') {
     if (path === '/api/v1/catalog/creatures') {
-      return { items: demoSpecies.filter((species) => species.is_active) } as T;
+      const ownedSlugs = new Set(demoCreatures.map((creature) => creature.species_slug));
+      const catalogue = demoSpecies
+        .filter((species) => species.is_active || ownedSlugs.has(species.slug))
+        .map((species) => ownedSlugs.has(species.slug) ? { ...species, locked: false } : { id: species.id, locked: true });
+      return { items: catalogue } as T;
     }
     if (options.method === 'POST') {
       const input = options.body as SpeciesInput;
