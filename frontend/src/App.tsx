@@ -281,7 +281,7 @@ export function App() {
     return (
       <div className="launch-gate">
         <div className="gate-card">
-          <div className="brand-mark">И</div>
+          <div className="brand-mark"><img src="/brand-logo.png" alt="" /></div>
           <p className="eyebrow">TELEGRAM MINI APP</p>
           <h1>Иномекопы</h1>
           <p>Открой приложение через Telegram, чтобы войти в профиль и управлять коллекцией.</p>
@@ -293,7 +293,7 @@ export function App() {
   if (loading)
     return (
       <div className="loading-screen">
-        <div className="loading-mark">И</div>
+        <div className="loading-mark"><img src="/brand-logo.png" alt="" /></div>
         <span>Загрузка приложения…</span>
       </div>
     );
@@ -302,7 +302,7 @@ export function App() {
     return (
       <div className="launch-gate">
         <div className="gate-card">
-          <div className="brand-mark">И</div>
+          <div className="brand-mark"><img src="/brand-logo.png" alt="" /></div>
           <h1>Не удалось подключиться</h1>
           <p>{loadError}</p>
           <button className="button button--primary" onClick={() => void loadData()}>
@@ -316,7 +316,7 @@ export function App() {
     <div className="app-shell">
       <header className="topbar no-print">
         <button className="brand" onClick={() => showPage('home')} aria-label="Иномекопы — главная">
-          <span className="brand-mark">И</span>
+          <span className="brand-mark"><img src="/brand-logo.png" alt="" /></span>
           <span className="brand-copy">
             <strong>ИНОМЕКОПЫ</strong>
             <small>ИГРОВОЙ МИР</small>
