@@ -14,15 +14,15 @@ type EggProduct struct {
 }
 
 type EggOffer struct {
-	Rarity           string         `json:"rarity"`
-	RarityChances    map[string]int `json:"rarity_chances,omitempty"`
-	Label            string         `json:"label"`
-	PriceGold        int64          `json:"price_gold"`
-	ImageURL         string         `json:"image_url"`
-	Description      string         `json:"description"`
-	IsActive         bool           `json:"is_active"`
-	Available        bool           `json:"available"`
-	AvailableSpecies int            `json:"available_species"`
+	Rarity           string             `json:"rarity"`
+	RarityChances    map[string]float64 `json:"rarity_chances,omitempty"`
+	Label            string             `json:"label"`
+	PriceGold        int64              `json:"price_gold"`
+	ImageURL         string             `json:"image_url"`
+	Description      string             `json:"description"`
+	IsActive         bool               `json:"is_active"`
+	Available        bool               `json:"available"`
+	AvailableSpecies int                `json:"available_species"`
 }
 
 type EggProductUpdateInput struct {
@@ -42,8 +42,8 @@ type Egg struct {
 }
 
 type ShopData struct {
-	EggOffers []EggOffer `json:"egg_offers"`
-	Eggs      []Egg      `json:"eggs"`
+	EggOffers []EggOffer `json:"lootboxes"`
+	Eggs      []Egg      `json:"inventory"`
 }
 
 type BuyEggInput struct {
@@ -51,12 +51,12 @@ type BuyEggInput struct {
 }
 
 type BuyEggResult struct {
-	Egg         Egg   `json:"egg"`
+	Egg         Egg   `json:"lootbox"`
 	GoldBalance int64 `json:"gold_balance"`
 }
 
 type HatchResult struct {
-	EggID         int64  `json:"egg_id"`
+	EggID         int64  `json:"lootbox_id"`
 	CreatureID    int64  `json:"creature_id"`
 	SpeciesSlug   string `json:"species_slug"`
 	Name          string `json:"name"`
@@ -64,6 +64,7 @@ type HatchResult struct {
 	Rarity        string `json:"rarity"`
 	SellPriceGold int64  `json:"sell_price_gold"`
 	GoldBalance   int64  `json:"gold_balance"`
+	GoldBonus     int64  `json:"gold_bonus"`
 }
 
 type SellResult struct {

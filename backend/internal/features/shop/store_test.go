@@ -19,14 +19,14 @@ func TestUnknownEggRarityIsRejected(t *testing.T) {
 	}
 }
 
-func TestValidEggKinds(t *testing.T) {
-	for _, kind := range []string{"common", "rare", "epic", "legendary", "mythic", "mystery"} {
-		if !validEggKind(kind) {
-			t.Errorf("validEggKind(%q) = false; want true", kind)
-		}
+func TestOnlyCollectionContainerKindIsPurchasable(t *testing.T) {
+	if !validEggKind("mystery") {
+		t.Fatal("collection container should be purchasable")
 	}
-	if validEggKind("unknown") {
-		t.Fatal("unknown egg kind should not be accepted")
+	for _, kind := range []string{"common", "rare", "epic", "legendary", "mythic", "unknown"} {
+		if validEggKind(kind) {
+			t.Errorf("legacy product kind %q should not be purchasable", kind)
+		}
 	}
 }
 
@@ -40,8 +40,8 @@ func TestValidMysteryChances(t *testing.T) {
 		t.Fatal("chances summing to 101 should be rejected")
 	}
 	noMythic := map[string]int{"common": 61, "rare": 25, "epic": 10, "legendary": 4, "mythic": 0}
-	if validMysteryChances(noMythic) {
-		t.Fatal("mystery egg must keep a positive mythic chance")
+	if !validMysteryChances(noMythic) {
+		t.Fatal("a rarity may be configured to 0% when the administrator chooses")
 	}
 }
 

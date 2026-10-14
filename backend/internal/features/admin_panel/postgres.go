@@ -3,7 +3,10 @@ package admin_panel
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -24,25 +27,38 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch NewBatch) (i
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-
 	var creature any
 	if batch.RewardCreatureSlug != "" {
 		creature = batch.RewardCreatureSlug
 	}
-	var id int64
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO code_batches (label, reward_gold, reward_creature_slug, reward_name, reward_rarity, created_by, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id
-	`, batch.Label, batch.RewardGold, creature, batch.RewardName, batch.RewardRarity, batch.CreatedBy, batch.ExpiresAt).Scan(&id)
+	if batch.RewardMode == "" {
+		batch.RewardMode = "fixed"
+	}
+	rarityJSON, err := json.Marshal(batch.RewardCreatureRarities)
 	if err != nil {
 		return 0, err
 	}
-
-	if len(batch.CodeHashes) != len(batch.CodeValues) {
-		return 0, errors.New("code hashes and values count mismatch")
+	goldMin, goldMax := batch.RewardGoldMin, batch.RewardGoldMax
+	if batch.RewardMode == "fixed" {
+		goldMin, goldMax = batch.RewardGold, batch.RewardGold
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO promo_codes (batch_id, code_hash, code_value) VALUES ($1, $2, $3)`)
+	var id int64
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO code_batches
+		(label,reward_gold,reward_creature_slug,reward_name,reward_rarity,created_by,expires_at,reward_mode,reward_gold_min,reward_gold_max,reward_creature_rarities)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) RETURNING id
+	`, batch.Label, batch.RewardGold, creature, batch.RewardName, batch.RewardRarity, batch.CreatedBy, batch.ExpiresAt,
+		batch.RewardMode, goldMin, goldMax, string(rarityJSON)).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	if len(batch.CodeHashes) != len(batch.CodeValues) || len(batch.CodeHashes) != len(batch.CodeRewards) {
+		return 0, errors.New("code hashes, values and rewards count mismatch")
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO promo_codes (batch_id,code_hash,code_value,reward_gold,reward_creature_slug,reward_name,reward_rarity)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+	`)
 	if err != nil {
 		return 0, err
 	}
@@ -51,7 +67,12 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch NewBatch) (i
 		if len(hash) != 32 {
 			return 0, errors.New("invalid code hash length")
 		}
-		if _, err := stmt.ExecContext(ctx, id, hash, batch.CodeValues[index]); err != nil {
+		reward := batch.CodeRewards[index]
+		var rewardCreature any
+		if reward.CreatureSlug != "" {
+			rewardCreature = reward.CreatureSlug
+		}
+		if _, err := stmt.ExecContext(ctx, id, hash, batch.CodeValues[index], reward.Gold, rewardCreature, reward.Name, reward.Rarity); err != nil {
 			return 0, err
 		}
 	}
@@ -67,12 +88,44 @@ func (r *PostgresRepository) ActiveSpeciesExists(ctx context.Context, slug strin
 	return exists, err
 }
 
+func (r *PostgresRepository) ActiveSpeciesByRarities(ctx context.Context, rarities []string) ([]ActiveSpeciesOption, error) {
+	if len(rarities) == 0 {
+		return []ActiveSpeciesOption{}, nil
+	}
+	placeholders := make([]string, len(rarities))
+	args := make([]any, len(rarities))
+	for i, rarity := range rarities {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = rarity
+	}
+	query := `SELECT slug,name,rarity FROM creature_species WHERE is_active=TRUE AND rarity IN (` + strings.Join(placeholders, ",") + `) ORDER BY rarity,slug`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ActiveSpeciesOption, 0)
+	for rows.Next() {
+		var item ActiveSpeciesOption
+		if err := rows.Scan(&item.Slug, &item.Name, &item.Rarity); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) ([]BatchCode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT code_value, redeemed_at
-		FROM promo_codes
-		WHERE batch_id = $1
-		ORDER BY id
+		SELECT c.code_value, c.redeemed_at,
+		       COALESCE(c.reward_gold,b.reward_gold), COALESCE(c.reward_creature_slug,b.reward_creature_slug),
+		       COALESCE(c.reward_name,b.reward_name), COALESCE(c.reward_rarity,b.reward_rarity)
+		FROM promo_codes c JOIN code_batches b ON b.id=c.batch_id
+		WHERE c.batch_id = $1
+		ORDER BY c.id
 	`, batchID)
 	if err != nil {
 		return nil, err
@@ -80,9 +133,10 @@ func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) 
 	defer rows.Close()
 	codes := make([]BatchCode, 0)
 	for rows.Next() {
-		var code sql.NullString
+		var code, creature, name, rarity sql.NullString
 		var redeemedAt sql.NullTime
-		if err := rows.Scan(&code, &redeemedAt); err != nil {
+		var rewardGold sql.NullInt64
+		if err := rows.Scan(&code, &redeemedAt, &rewardGold, &creature, &name, &rarity); err != nil {
 			return nil, err
 		}
 		item := BatchCode{}
@@ -92,6 +146,18 @@ func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) 
 		if redeemedAt.Valid {
 			t := redeemedAt.Time
 			item.RedeemedAt = &t
+		}
+		if rewardGold.Valid {
+			item.RewardGold = rewardGold.Int64
+		}
+		if creature.Valid {
+			item.RewardCreatureSlug = creature.String
+		}
+		if name.Valid {
+			item.RewardName = name.String
+		}
+		if rarity.Valid {
+			item.RewardRarity = rarity.String
 		}
 		codes = append(codes, item)
 	}
@@ -113,9 +179,8 @@ func (r *PostgresRepository) ListBatchCodes(ctx context.Context, batchID int64) 
 func (r *PostgresRepository) ListBatches(ctx context.Context, limit, offset int) ([]BatchSummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT b.id, b.label, b.reward_name, b.reward_rarity, b.reward_gold, b.reward_creature_slug, b.created_by,
-		       b.created_at, b.expires_at, b.revoked_at,
-		       COUNT(c.id) AS code_count,
-		       COUNT(c.redeemed_at) AS redeemed_count
+		       b.created_at, b.expires_at, b.revoked_at, b.reward_mode, b.reward_gold_min, b.reward_gold_max, b.reward_creature_rarities::text,
+		       COUNT(c.id) AS code_count, COUNT(c.redeemed_at) AS redeemed_count
 		FROM code_batches b
 		LEFT JOIN promo_codes c ON c.batch_id = b.id
 		GROUP BY b.id
@@ -130,13 +195,19 @@ func (r *PostgresRepository) ListBatches(ctx context.Context, limit, offset int)
 	batches := make([]BatchSummary, 0)
 	for rows.Next() {
 		var batch BatchSummary
-		var creature sql.NullString
+		var creature, rarityJSON sql.NullString
 		var expiresAt, revokedAt sql.NullTime
 		if err := rows.Scan(
 			&batch.ID, &batch.Label, &batch.RewardName, &batch.RewardRarity, &batch.RewardGold, &creature, &batch.CreatedBy,
-			&batch.CreatedAt, &expiresAt, &revokedAt, &batch.CodeCount, &batch.RedeemedCount,
+			&batch.CreatedAt, &expiresAt, &revokedAt, &batch.RewardMode, &batch.RewardGoldMin, &batch.RewardGoldMax, &rarityJSON, &batch.CodeCount, &batch.RedeemedCount,
 		); err != nil {
 			return nil, err
+		}
+		batch.RewardCreatureRarities = make([]string, 0)
+		if rarityJSON.Valid {
+			if err := json.Unmarshal([]byte(rarityJSON.String), &batch.RewardCreatureRarities); err != nil {
+				return nil, err
+			}
 		}
 		if creature.Valid {
 			batch.RewardCreatureSlug = creature.String

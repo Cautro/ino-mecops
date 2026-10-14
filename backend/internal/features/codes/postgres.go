@@ -37,7 +37,7 @@ func (r *PostgresRepository) Redeem(ctx context.Context, telegramID int64, codeH
 		  AND c.revoked_at IS NULL
 		  AND b.revoked_at IS NULL
 		  AND (b.expires_at IS NULL OR b.expires_at > now())
-		RETURNING c.id, b.reward_gold, b.reward_creature_slug, b.reward_name, b.reward_rarity, c.redeemed_at
+		RETURNING c.id, COALESCE(c.reward_gold,b.reward_gold), COALESCE(c.reward_creature_slug,b.reward_creature_slug), COALESCE(c.reward_name,b.reward_name), COALESCE(c.reward_rarity,b.reward_rarity), c.redeemed_at
 	`, telegramID, codeHash).Scan(&result.CodeID, &result.GoldAdded, &creature, &result.RewardName, &result.RewardRarity, &redeemedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RedeemResult{}, ErrInvalidCode

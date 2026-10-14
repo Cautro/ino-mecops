@@ -45,7 +45,7 @@ func (h *Handler) ListAdminEggs(w http.ResponseWriter, r *http.Request) {
 	items, err := h.store.ListEggProducts(r.Context())
 	if err != nil {
 		log.Printf("admin list egg products failed: %v", err)
-		services.WriteError(w, http.StatusInternalServerError, "egg_catalog_failed", "Не удалось загрузить настройки яиц.")
+		services.WriteError(w, http.StatusInternalServerError, "egg_catalog_failed", "Не удалось загрузить настройки контейнера.")
 		return
 	}
 	services.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -58,21 +58,21 @@ func (h *Handler) UpdateAdminEgg(w http.ResponseWriter, r *http.Request) {
 	rarity := strings.TrimSpace(r.PathValue("rarity"))
 	var input EggProductUpdateInput
 	if err := services.DecodeJSON(w, r, &input); err != nil {
-		services.WriteError(w, http.StatusBadRequest, "bad_request", "Некорректные настройки яйца.")
+		services.WriteError(w, http.StatusBadRequest, "bad_request", "Некорректные настройки контейнера.")
 		return
 	}
 	item, err := h.store.UpdateEggProduct(r.Context(), rarity, input)
 	if err != nil {
 		if errors.Is(err, ErrInvalidMysteryChances) {
-			services.WriteError(w, http.StatusBadRequest, "invalid_mystery_chances", "Шансы загадочного яйца должны в сумме давать 100%, значение каждого шанса — от 0 до 100%, а шанс мифической редкости — не меньше 1%.")
+			services.WriteError(w, http.StatusBadRequest, "invalid_mystery_chances", "Шансы контейнера должны в сумме давать 100%, каждое значение должно быть от 0 до 100%.")
 			return
 		}
 		if errors.Is(err, ErrInvalidEggProduct) || errors.Is(err, ErrInvalidRarity) {
-			services.WriteError(w, http.StatusBadRequest, "invalid_egg_product", "Проверь название, цену, описание и изображение яйца.")
+			services.WriteError(w, http.StatusBadRequest, "invalid_lootbox_product", "Проверь название, цену, описание и изображение контейнера.")
 			return
 		}
 		log.Printf("admin update egg product failed: rarity=%q err=%v", rarity, err)
-		services.WriteError(w, http.StatusInternalServerError, "egg_product_update_failed", "Не удалось сохранить настройки яйца.")
+		services.WriteError(w, http.StatusInternalServerError, "egg_product_update_failed", "Не удалось сохранить настройки контейнера.")
 		return
 	}
 	services.WriteJSON(w, http.StatusOK, item)
@@ -101,27 +101,24 @@ func (h *Handler) BuyEgg(w http.ResponseWriter, r *http.Request) {
 	}
 	var input BuyEggInput
 	if err := services.DecodeJSON(w, r, &input); err != nil {
-		services.WriteError(w, http.StatusBadRequest, "bad_request", "Выбери редкость яйца.")
+		services.WriteError(w, http.StatusBadRequest, "bad_request", "Выбери тип коллекционного контейнера.")
 		return
 	}
 	result, err := h.store.BuyEgg(r.Context(), user.ID, input.Rarity)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidRarity):
-			services.WriteError(w, http.StatusBadRequest, "invalid_rarity", "Неизвестная редкость яйца.")
+			services.WriteError(w, http.StatusBadRequest, "invalid_rarity", "Неизвестный тип контейнера.")
 		case errors.Is(err, ErrInsufficientGold):
-			services.WriteError(w, http.StatusConflict, "insufficient_gold", "Не хватает золота для покупки этого яйца.")
+			services.WriteError(w, http.StatusConflict, "insufficient_gold", "Не хватает золота для покупки контейнера.")
 		case errors.Is(err, ErrSpeciesUnavailable):
-			message := "В этой редкости пока нет активных иномеконов. Сначала добавь такой вид в каталог."
-			if input.Rarity == "mystery" {
-				message = "В каталоге пока нет активных иномеконов, поэтому загадочное яйцо недоступно."
-			}
-			services.WriteError(w, http.StatusConflict, "egg_unavailable", message)
+			message := "В каталоге пока нет активных иномеконов, поэтому контейнер недоступен."
+			services.WriteError(w, http.StatusConflict, "lootbox_unavailable", message)
 		case errors.Is(err, ErrPlayerNotFound):
 			services.WriteError(w, http.StatusNotFound, "player_not_found", "Игровой профиль не найден.")
 		default:
 			log.Printf("BuyEgg failed: player=%d rarity=%q err=%v", user.ID, input.Rarity, err)
-			services.WriteError(w, http.StatusInternalServerError, "egg_purchase_failed", "Не удалось купить яйцо.")
+			services.WriteError(w, http.StatusInternalServerError, "lootbox_purchase_failed", "Не удалось купить контейнер.")
 		}
 		return
 	}
@@ -136,21 +133,21 @@ func (h *Handler) HatchEgg(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id < 1 {
-		services.WriteError(w, http.StatusBadRequest, "invalid_egg", "Некорректный номер яйца.")
+		services.WriteError(w, http.StatusBadRequest, "invalid_lootbox", "Некорректный номер контейнера.")
 		return
 	}
 	result, err := h.store.HatchEgg(r.Context(), user.ID, id)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrEggNotOwned):
-			services.WriteError(w, http.StatusNotFound, "egg_not_owned", "Это яйцо не найдено в твоём инвентаре.")
+			services.WriteError(w, http.StatusNotFound, "egg_not_owned", "Этот контейнер не найден в инвентаре.")
 		case errors.Is(err, ErrSpeciesUnavailable):
-			services.WriteError(w, http.StatusConflict, "egg_unavailable", "В каталоге больше нет активных иномеконов этой редкости. Яйцо сохранено.")
+			services.WriteError(w, http.StatusConflict, "lootbox_unavailable", "В каталоге пока нет активных иномеконов. Контейнер сохранён.")
 		case errors.Is(err, ErrPlayerNotFound):
 			services.WriteError(w, http.StatusNotFound, "player_not_found", "Игровой профиль не найден.")
 		default:
 			log.Printf("HatchEgg failed: player=%d egg=%d err=%v", user.ID, id, err)
-			services.WriteError(w, http.StatusInternalServerError, "egg_hatch_failed", "Не удалось вылупить яйцо.")
+			services.WriteError(w, http.StatusInternalServerError, "egg_hatch_failed", "Не удалось открыть контейнер.")
 		}
 		return
 	}

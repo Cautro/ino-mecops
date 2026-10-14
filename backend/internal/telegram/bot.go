@@ -59,13 +59,33 @@ func RunPollingBot(ctx context.Context, token, webAppURL string, logger *log.Log
 			return nil
 		}
 
+		fields := strings.Fields(text)
+		startPayload := ""
+		if command == "/start" && len(fields) > 1 {
+			candidate := strings.TrimSpace(fields[1])
+			if len(candidate) <= 64 && validStartPayload(candidate) {
+				startPayload = candidate
+			}
+		}
 		welcomeText := "Добро пожаловать в мир Ино-мекопов!\n\nАктивируй код с карточки, получай золото и собирай свою коллекцию."
+		buttonText := "Открыть игру"
+		launchURL := webAppURL
+		if startPayload != "" {
+			welcomeText = "Ты открыл карточку с кодом. Нажми кнопку ниже, чтобы проверить и получить награду."
+			buttonText = "Открыть игру и забрать награду"
+			if parsed, parseErr := url.Parse(webAppURL); parseErr == nil {
+				query := parsed.Query()
+				query.Set("startapp", startPayload)
+				parsed.RawQuery = query.Encode()
+				launchURL = parsed.String()
+			}
+		}
 		var replyMarkup *telego.InlineKeyboardMarkup
 
-		if webAppURL != "" {
+		if launchURL != "" {
 			replyMarkup = tu.InlineKeyboard(
 				tu.InlineKeyboardRow(
-					tu.InlineKeyboardButton("Открыть игру").WithWebApp(&telego.WebAppInfo{URL: webAppURL}),
+					tu.InlineKeyboardButton(buttonText).WithWebApp(&telego.WebAppInfo{URL: launchURL}),
 				),
 			)
 		} else {
@@ -85,6 +105,18 @@ func RunPollingBot(ctx context.Context, token, webAppURL string, logger *log.Log
 
 	go bh.Start()
 	<-ctx.Done()
+}
+
+func validStartPayload(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func ValidateWebAppURL(raw string) error {

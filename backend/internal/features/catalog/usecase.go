@@ -98,7 +98,7 @@ func (u *UseCase) DeleteSpecies(ctx context.Context, id int64) error {
 	return u.repo.DeleteSpecies(ctx, id)
 }
 
-func normalizeMainBonus(kind string, multiplier int) (string, int) {
+func normalizeMainBonus(kind string, multiplier float64) (string, float64) {
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
 		kind = "none"
@@ -109,8 +109,8 @@ func normalizeMainBonus(kind string, multiplier int) (string, int) {
 	return kind, multiplier
 }
 
-func validMainBonus(kind string, multiplier int) bool {
-	return (kind == "none" || kind == "slot_chance" || kind == "slot_payout" || kind == "passive_income") && multiplier >= 1 && multiplier <= 10
+func validMainBonus(kind string, multiplier float64) bool {
+	return (kind == "none" || kind == "lootbox_chance" || kind == "lootbox_gold" || kind == "passive_income") && multiplier >= 1 && multiplier <= 10
 }
 
 func validateAbilityInput(slug, name, description, element string, power int, accuracy float64, cooldown int, effect string, effectValue, effectDuration int) error {
@@ -140,7 +140,7 @@ func validImageURL(value string) bool {
 	return err == nil && u.Scheme == "https" && u.Host != "" && len(value) <= 500
 }
 
-func validSpeciesInput(slug, name, description, imageURL, rarity string, passiveGold int64, health, damage int, critChance float64, abilityID int64, validateSlug bool) bool {
+func validSpeciesInput(slug, name, description, imageURL, rarity string, passiveGold, health, damage, critChance float64, abilityID int64, validateSlug bool) bool {
 	if validateSlug && (!slugPattern.MatchString(slug) || len(slug) > 48) {
 		return false
 	}

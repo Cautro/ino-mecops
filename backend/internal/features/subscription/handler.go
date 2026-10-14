@@ -56,7 +56,7 @@ type ClaimResponse struct {
 	CreatureName   string `json:"creature_name,omitempty"`
 }
 
-func NewHandler(db *sql.DB, botToken, channelURL, chatID, title, message string, rewardGold int64, rewardCreature string) *Handler {
+func NewHandler(db *sql.DB, botToken, channelURL, chatID, title, message string, rewardGold int64, _ string) *Handler {
 	if strings.TrimSpace(title) == "" {
 		title = "Подпишись на канал Иномекопов"
 	}
@@ -66,13 +66,14 @@ func NewHandler(db *sql.DB, botToken, channelURL, chatID, title, message string,
 	return &Handler{
 		db: db, botToken: strings.TrimSpace(botToken), channelURL: strings.TrimSpace(channelURL),
 		chatID: strings.TrimSpace(chatID), title: strings.TrimSpace(title), message: strings.TrimSpace(message),
-		rewardGold: rewardGold, rewardCreature: strings.TrimSpace(rewardCreature),
+		// Creature acquisition is deliberately limited to collection containers and promo/QR codes.
+		rewardGold: rewardGold, rewardCreature: "",
 		client: &http.Client{Timeout: 6 * time.Second},
 	}
 }
 
 func (h *Handler) configured() bool {
-	return h.channelURL != "" && h.chatID != "" && h.botToken != "" && (h.rewardGold > 0 || h.rewardCreature != "")
+	return h.channelURL != "" && h.chatID != "" && h.botToken != "" && h.rewardGold > 0
 }
 
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {

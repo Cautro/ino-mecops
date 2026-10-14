@@ -4009,3 +4009,35 @@ button.species-card--catalog:focus-visible {
   .leaderboard-player strong { font-size: 11px; }
   .leaderboard-score strong { font-size: 11px; }
 }
+
+/* Random reward batches: printable, per-code QR cards */
+.admin-rarity-picker { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.admin-rarity-picker legend { padding: 0 5px; }
+.admin-rarity-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.admin-rarity-options label { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); font-size: 11px; }
+.admin-rarity-options input { width: auto; min-height: auto; accent-color: var(--accent); }
+.admin-rarity-picker small { display: block; margin-top: 9px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.admin-code-result .admin-qr-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.admin-qr-card { display: grid; align-content: start; justify-items: center; gap: 8px; min-width: 0; padding: 12px 9px; border: 1px solid var(--line); border-radius: 12px; background: rgba(4, 9, 16, .5); text-align: center; break-inside: avoid; }
+.admin-qr-image { display: grid; place-items: center; width: 100%; max-width: 160px; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: #fff; }
+.admin-qr-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.admin-qr-image span { padding: 8px; color: #192536; font-size: 10px; }
+.admin-qr-card > strong { max-width: 100%; overflow-wrap: anywhere; color: var(--ink); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; }
+.admin-qr-card > small { width: 100%; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.admin-qr-card .button { min-height: 30px; padding: 0 8px; font-size: 10px; }
+@media (max-width: 760px) {
+  .admin-rarity-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-code-result .admin-qr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media print {
+  body { background: #fff !important; color: #111 !important; }
+  body * { visibility: hidden !important; }
+  .admin-code-result, .admin-code-result * { visibility: visible !important; }
+  .admin-code-result { position: absolute !important; inset: 0 !important; width: 100% !important; padding: 0 !important; margin: 0 !important; border: 0 !important; background: #fff !important; color: #111 !important; }
+  .admin-code-result > textarea, .admin-code-result .admin-form-heading .admin-item-actions, .admin-code-result .admin-form-actions, .admin-code-result .admin-qr-card .button, .admin-code-result .admin-hint { display: none !important; }
+  .admin-code-result .admin-form-heading p, .admin-code-result .admin-form-heading h3 { color: #111 !important; }
+  .admin-code-result .admin-qr-grid { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px !important; }
+  .admin-qr-card { color: #111 !important; border: 1px solid #ddd !important; background: #fff !important; }
+  .admin-qr-card strong, .admin-qr-card small { color: #111 !important; }
+  .admin-qr-image { width: 130px; height: 130px; }
+}
