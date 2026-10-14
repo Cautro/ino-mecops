@@ -63,6 +63,10 @@ func (h *Handler) UpdateAdminEgg(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := h.store.UpdateEggProduct(r.Context(), rarity, input)
 	if err != nil {
+		if errors.Is(err, ErrInvalidMysteryChances) {
+			services.WriteError(w, http.StatusBadRequest, "invalid_mystery_chances", "Шансы загадочного яйца должны в сумме давать 100%, значение каждого шанса — от 0 до 100%, а шанс мифической редкости — не меньше 1%.")
+			return
+		}
 		if errors.Is(err, ErrInvalidEggProduct) || errors.Is(err, ErrInvalidRarity) {
 			services.WriteError(w, http.StatusBadRequest, "invalid_egg_product", "Проверь название, цену, описание и изображение яйца.")
 			return
@@ -108,7 +112,11 @@ func (h *Handler) BuyEgg(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrInsufficientGold):
 			services.WriteError(w, http.StatusConflict, "insufficient_gold", "Не хватает золота для покупки этого яйца.")
 		case errors.Is(err, ErrSpeciesUnavailable):
-			services.WriteError(w, http.StatusConflict, "egg_unavailable", "В этой редкости пока нет активных иномеконов. Сначала добавь такой вид в каталог.")
+			message := "В этой редкости пока нет активных иномеконов. Сначала добавь такой вид в каталог."
+			if input.Rarity == "mystery" {
+				message = "В каталоге пока нет активных иномеконов, поэтому загадочное яйцо недоступно."
+			}
+			services.WriteError(w, http.StatusConflict, "egg_unavailable", message)
 		case errors.Is(err, ErrPlayerNotFound):
 			services.WriteError(w, http.StatusNotFound, "player_not_found", "Игровой профиль не найден.")
 		default:

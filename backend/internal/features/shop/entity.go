@@ -3,32 +3,35 @@ package shop
 import "time"
 
 type EggProduct struct {
-	Rarity      string    `json:"rarity"`
-	Label       string    `json:"label"`
-	PriceGold   int64     `json:"price_gold"`
-	ImageURL    string    `json:"image_url"`
-	Description string    `json:"description"`
-	IsActive    bool      `json:"is_active"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Rarity        string         `json:"rarity"`
+	RarityChances map[string]int `json:"rarity_chances,omitempty"`
+	Label         string         `json:"label"`
+	PriceGold     int64          `json:"price_gold"`
+	ImageURL      string         `json:"image_url"`
+	Description   string         `json:"description"`
+	IsActive      bool           `json:"is_active"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 type EggOffer struct {
-	Rarity           string `json:"rarity"`
-	Label            string `json:"label"`
-	PriceGold        int64  `json:"price_gold"`
-	ImageURL         string `json:"image_url"`
-	Description      string `json:"description"`
-	IsActive         bool   `json:"is_active"`
-	Available        bool   `json:"available"`
-	AvailableSpecies int    `json:"available_species"`
+	Rarity           string         `json:"rarity"`
+	RarityChances    map[string]int `json:"rarity_chances,omitempty"`
+	Label            string         `json:"label"`
+	PriceGold        int64          `json:"price_gold"`
+	ImageURL         string         `json:"image_url"`
+	Description      string         `json:"description"`
+	IsActive         bool           `json:"is_active"`
+	Available        bool           `json:"available"`
+	AvailableSpecies int            `json:"available_species"`
 }
 
 type EggProductUpdateInput struct {
-	Label       string `json:"label"`
-	PriceGold   int64  `json:"price_gold"`
-	ImageURL    string `json:"image_url"`
-	Description string `json:"description"`
-	IsActive    bool   `json:"is_active"`
+	RarityChances map[string]int `json:"rarity_chances,omitempty"`
+	Label         string         `json:"label"`
+	PriceGold     int64          `json:"price_gold"`
+	ImageURL      string         `json:"image_url"`
+	Description   string         `json:"description"`
+	IsActive      bool           `json:"is_active"`
 }
 
 type Egg struct {

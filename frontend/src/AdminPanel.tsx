@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api } from './api';
-import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggProduct, EggProductUpdateInput, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
+import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggKind, EggProduct, EggProductUpdateInput, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
 
 type AdminPanelProps = {
   initData: string;
@@ -126,7 +126,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     finally { setImageBusy(false); }
   };
 
-  const uploadEggImage = async (rarity: Rarity, file?: File) => {
+  const uploadEggImage = async (rarity: EggKind, file?: File) => {
     if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/gif'].includes(file.type)) { setError('Выбери изображение PNG, JPEG или GIF.'); return; }
     if (file.size > 5 * 1024 * 1024) { setError('Размер изображения не должен превышать 5 МБ.'); return; }
@@ -141,7 +141,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
 
   const saveEggProduct = async (item: EggProduct) => {
     setBusy(true); setError(''); setSuccess('');
-    const payload: EggProductUpdateInput = { label: item.label, price_gold: item.price_gold, image_url: item.image_url, description: item.description, is_active: item.is_active };
+    const payload: EggProductUpdateInput = { label: item.label, price_gold: item.price_gold, image_url: item.image_url, description: item.description, is_active: item.is_active, ...(item.rarity === 'mystery' ? { rarity_chances: item.rarity_chances } : {}) };
     try {
       const updated = await api.updateAdminEggProduct(initData, item.rarity, payload);
       setEggProducts((items) => items.map((egg) => egg.rarity === updated.rarity ? updated : egg));
@@ -244,13 +244,20 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
           <div className="admin-section-heading"><div><h2>Оформление и цены яиц</h2><p>Настраивай название, цену, картинку, описание и доступность каждого яйца. Цена применяется к новым покупкам; купленные яйца остаются в инвентаре.</p></div></div>
           <div className="egg-admin-grid">
             {eggProducts.map((egg) => <form className="surface egg-admin-card" key={egg.rarity} onSubmit={(event) => { event.preventDefault(); void saveEggProduct(egg); }}>
-              <div className="admin-form-heading"><div><h3>{egg.label}</h3><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{RARITY_OPTIONS.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span></div><label className="admin-inline-toggle"><input type="checkbox" checked={egg.is_active} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, is_active: event.target.checked } : item))} /> Доступно</label></div>
+              <div className="admin-form-heading"><div><h3>{egg.label}</h3><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{egg.rarity === 'mystery' ? 'Загадочное' : RARITY_OPTIONS.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span></div><label className="admin-inline-toggle"><input type="checkbox" checked={egg.is_active} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, is_active: event.target.checked } : item))} /> Доступно</label></div>
               <div className="egg-admin-preview">{egg.image_url ? <img src={egg.image_url} alt={egg.label} /> : <span>🥚</span>}</div>
               <div className="admin-form-grid">
                 {field('Название яйца', egg.label, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, label: v } : item)), { required: true, maxLength: 80 })}
                 {field('Цена (золота)', egg.price_gold, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, price_gold: Number(v) } : item)), { type: 'number', min: 1, max: 100000000, required: true })}
                 <label className="field admin-field-wide"><span className="field-label">URL картинки</span><input value={egg.image_url} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, image_url: event.target.value } : item))} placeholder="/uploads/egg.png или https://…" /><input className="admin-file-input" type="file" accept="image/png,image/jpeg,image/gif" disabled={imageBusy} onChange={(event) => { const file = event.target.files?.[0]; void uploadEggImage(egg.rarity, file); event.currentTarget.value = ''; }} /><small>{imageBusy ? 'Загружаем изображение…' : 'PNG, JPEG или GIF до 5 МБ. Загрузка сохранит файл, затем нажми «Сохранить яйцо».'}</small></label>
                 <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={egg.description} rows={3} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, description: event.target.value } : item))} /></label>
+                {egg.rarity === 'mystery' && <div className="mystery-egg-chance-editor admin-field-wide">
+                  <div><strong>Шансы редкостей</strong><small>Сумма должна быть ровно 100%. У мифической редкости всегда остаётся шанс от 1%.</small></div>
+                  <div className="mystery-egg-chance-fields">
+                    {RARITY_OPTIONS.map((option) => <label className="field" key={option.value}><span className="field-label">{option.label}, %</span><input type="number" min={option.value === 'mythic' ? 1 : 0} max={100} required value={egg.rarity_chances?.[option.value] ?? ({ common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 }[option.value])} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === 'mystery' ? { ...item, rarity_chances: { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1, ...(item.rarity_chances ?? {}), [option.value]: Number(event.target.value) } } : item))} /></label>)}
+                  </div>
+                  <small>Если у редкости нет активных иномеконов, её шанс перераспределяется между доступными. Если все заданные шансы приходятся на отсутствующие редкости, доступные редкости получают равные шансы.</small>
+                </div>}
               </div>
               <div className="admin-form-actions"><button className="button button--primary" disabled={busy || imageBusy}>{busy ? 'Сохраняем…' : 'Сохранить яйцо'}</button></div>
             </form>)}

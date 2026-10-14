@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
 import AdminPanel from './AdminPanel';
-import type { CollectionSpecies, Creature, HatchEggResult, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult, SubscriptionClaimResult, SubscriptionStatus } from './api';
+import type { CollectionSpecies, Creature, EggKind, HatchEggResult, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult, SubscriptionClaimResult, SubscriptionStatus } from './api';
 
 // ==================== Типы и константы ====================
 
@@ -102,6 +102,8 @@ export function App() {
   const launchCode = getStartParam(telegram);
   const autoRedeemAttempted = useRef('');
   const subscriptionAutoOpened = useRef(false);
+  const tutorialAutoOpened = useRef(false);
+  const tutorialSuppressedSubscriptionThisSession = useRef(false);
 
   const [page, setPage] = useState<Page>('home');
   const [isAdmin, setIsAdmin] = useState(false);
@@ -113,6 +115,9 @@ export function App() {
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
   const [subscriptionBusy, setSubscriptionBusy] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState('');
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [shopTutorialStep, setShopTutorialStep] = useState<'buy' | 'hatch' | null>(null);
   const [shopBusy, setShopBusy] = useState(false);
   const [lastHatch, setLastHatch] = useState<HatchEggResult | null>(null);
   const [confirmSellID, setConfirmSellID] = useState<number | null>(null);
@@ -179,6 +184,18 @@ export function App() {
       const [playerResponse, creatureResponse] = await Promise.all([api.me(initData), api.creatures(initData)]);
       setPlayer(playerResponse);
       setOwnedCreatures(creatureResponse.items ?? []);
+      if (!tutorialAutoOpened.current) {
+        const tutorialKey = `inomecops:onboarding-seen:${playerResponse.telegram_id}`;
+        let tutorialSeen = false;
+        try { tutorialSeen = window.localStorage.getItem(tutorialKey) === '1'; } catch { /* this session's ref remains authoritative */ }
+        if (!tutorialSeen) {
+          setTutorialOpen(true);
+          setTutorialStep(0);
+          tutorialAutoOpened.current = true;
+          tutorialSuppressedSubscriptionThisSession.current = true;
+          try { window.localStorage.setItem(tutorialKey, '1'); } catch { /* ignore storage restrictions */ }
+        }
+      }
       if ((playerResponse.passive_gold_claimed ?? 0) > 0) {
         setNotice({
           kind: 'success',
@@ -200,7 +217,7 @@ export function App() {
       try {
         const subscription = await api.subscriptionStatus(initData);
         setSubscriptionStatus(subscription);
-        if (subscription.enabled && !subscription.claimed && !subscriptionAutoOpened.current) {
+        if (subscription.enabled && !subscription.claimed && !subscriptionAutoOpened.current && !tutorialSuppressedSubscriptionThisSession.current) {
           // Show the automatic prompt only once per Telegram account. The “Бонус” tab
           // remains available after dismissal so the player can return later.
           const promptKey = `inomecops:subscription-prompt-seen:${playerResponse.telegram_id}`;
@@ -317,6 +334,23 @@ export function App() {
 
   const closeSubscriptionModal = () => setSubscriptionModalOpen(false);
 
+  const openTutorial = () => {
+    setTutorialStep(0);
+    setTutorialOpen(true);
+    if (player) {
+      try { window.localStorage.setItem(`inomecops:onboarding-seen:${player.telegram_id}`, '1'); } catch { /* ignore storage restrictions */ }
+    }
+  };
+
+  const closeTutorial = () => setTutorialOpen(false);
+
+  const goToShopFromTutorial = () => {
+    setShopTutorialStep('buy');
+    setPage('shop');
+    setNotice(null);
+    setTutorialOpen(false);
+  };
+
   const claimSubscriptionReward = async () => {
     if (subscriptionBusy || !subscriptionStatus?.enabled) return;
     setSubscriptionBusy(true);
@@ -426,14 +460,15 @@ export function App() {
     setShopData(freshShop);
   };
 
-  const buyEgg = async (rarity: Rarity) => {
+  const buyEgg = async (rarity: EggKind) => {
     if (shopBusy) return;
     setShopBusy(true);
     setNotice(null);
     try {
       const result = await api.buyEgg(initData, rarity);
       await refreshAfterShopAction();
-      setNotice({ kind: 'success', title: 'Яйцо куплено', message: `Яйцо редкости «${RARITIES.find((item) => item.value === rarity)?.label ?? rarity}» добавлено в инвентарь. Списано ${formatNumber(result.egg.price_gold)} золота.` });
+      setNotice({ kind: 'success', title: 'Яйцо куплено', message: `«${shopData?.egg_offers.find((item) => item.rarity === rarity)?.label ?? (RARITIES.find((item) => item.value === rarity)?.label ?? 'Загадочное')}» добавлено в рюкзак. Теперь пролистай до «Яйца в рюкзаке» и нажми «Вылупить». Списано ${formatNumber(result.egg.price_gold)} золота.` });
+      if (shopTutorialStep === 'buy') setShopTutorialStep('hatch');
       telegram?.HapticFeedback?.notificationOccurred('success');
     } catch (error) {
       setNotice({ kind: 'error', title: 'Не удалось купить яйцо', message: errorMessage(error) });
@@ -452,7 +487,8 @@ export function App() {
       setLastHatch(result);
       setConfirmSellID(null);
       await refreshAfterShopAction();
-      setNotice({ kind: 'success', title: 'Яйцо вылупилось!', message: `Ты получил иномекона «${result.name}». Он добавлен в коллекцию.` });
+      setNotice({ kind: 'success', title: 'Яйцо вылупилось!', message: `Ты получил иномекона «${result.name}». Он добавлен в коллекцию и теперь участвует в пассивном доходе. Его текущую сумму можно увидеть на главной странице.` });
+      if (shopTutorialStep === 'hatch') setShopTutorialStep(null);
       telegram?.HapticFeedback?.notificationOccurred('success');
     } catch (error) {
       setNotice({ kind: 'error', title: 'Не удалось вылупить яйцо', message: errorMessage(error) });
@@ -538,6 +574,7 @@ export function App() {
           <button className={page === 'shop' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('shop')}>
             Магазин <span className="nav-count">{shopData?.eggs.length ?? 0}</span>
           </button>
+          <button className="nav-item tutorial-nav-item" onClick={openTutorial}>Как играть</button>
           {subscriptionStatus?.enabled && <button className="nav-item subscription-nav-item" onClick={() => { setSubscriptionError(''); setSubscriptionModalOpen(true); }}>Бонус</button>}
           {isAdmin && <button className={page === 'admin' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('admin')}>Администрирование</button>}
         </nav>
@@ -599,10 +636,14 @@ export function App() {
                     <>
                       <span className="slot-result-icon">{slotResult.bet_type === 'creature' ? (slotResult.creature_stake_lost ? '↻' : slotResult.creature_rewards?.length ? '✦' : '✓') : slotResult.net > 0 ? '✦' : '↻'}</span>
                       <div className="slot-result-copy">
-                        <strong>{slotResult.message}</strong>
+                        <strong className={slotResult.bet_type === 'gold' ? (slotResult.payout > 0 ? 'slot-payout-positive' : 'slot-payout-negative') : ''}>
+                          {slotResult.bet_type === 'gold'
+                            ? slotResult.payout > 0 ? `+${formatNumber(slotResult.payout)} золота` : `−${formatNumber(slotResult.bet)} золота`
+                            : slotResult.message}
+                        </strong>
                         {slotResult.bet_type === 'creature' ? (
                           <span>
-                            Ставка: {slotResult.bet_creature_name ?? 'иномекон'} ·{' '}
+                            {slotResult.message} Ставка: {slotResult.bet_creature_name ?? 'иномекон'} ·{' '}
                             <b className={slotResult.creature_stake_lost ? 'slot-net-negative' : 'slot-net-positive'}>
                               {slotResult.creature_stake_lost ? 'потерян' : 'сохранён'}
                             </b>
@@ -610,10 +651,10 @@ export function App() {
                           </span>
                         ) : (
                           <span>
-                            Выплата: {formatNumber(slotResult.payout)} золота · чистый итог:{' '}
-                            <b className={slotResult.net >= 0 ? 'slot-net-positive' : 'slot-net-negative'}>
-                              {slotResult.net > 0 ? '+' : ''}{formatNumber(slotResult.net)}
-                            </b>
+                            {slotResult.message}{' '}
+                            {slotResult.payout > 0
+                              ? `На баланс начислено +${formatNumber(slotResult.payout)} золота. Ставка ${formatNumber(slotResult.bet)} золота была списана до вращения, чистый итог раунда: ${slotResult.net > 0 ? '+' : ''}${formatNumber(slotResult.net)} золота.`
+                              : `Ставка ${formatNumber(slotResult.bet)} золота списана до вращения — выплата не начислена.`}
                           </span>
                         )}
                         {slotResult.creature_slug && <small>Новый иномекон добавлен в твою коллекцию.</small>}
@@ -834,19 +875,27 @@ export function App() {
               <div className="shop-balance"><span>ТВОЙ БАЛАНС</span><strong>{formatNumber(player?.gold ?? 0)}</strong><small>золота</small></div>
             </div>
 
+            {shopTutorialStep && <div className="tutorial-shop-guide" role="status">
+              <span className="tutorial-guide-kicker">ОБУЧЕНИЕ · ШАГ {shopTutorialStep === 'buy' ? '1' : '2'} ИЗ 2</span>
+              <strong>{shopTutorialStep === 'buy' ? 'Сначала купи яйцо' : 'Теперь вылупи яйцо'}</strong>
+              <p>{shopTutorialStep === 'buy'
+                ? 'Выбери яйцо по цене и редкости. Покупка положит его в рюкзак, но иномекон не появится автоматически — для этого нужен следующий шаг.'
+                : 'Пролистай вниз до раздела «Яйца в рюкзаке» и нажми «Вылупить». Иномекон добавится в коллекцию, а его пассивный доход будет прибавляться со временем.'}</p>
+              <button type="button" className="text-button" onClick={() => setShopTutorialStep(null)}>Скрыть подсказку</button>
+            </div>}
             {!shopData ? (
-              <div className="surface shop-empty"><h2>Магазин пока недоступен</h2><p>Не удалось загрузить данные магазина. Обнови страницу; если ошибка повторяется, проверь, что миграция 008 применена и backend перезапущен.</p><button className="button button--secondary" onClick={() => void api.shop(initData).then(setShopData).catch((error) => setNotice({ kind: 'error', title: 'Ошибка магазина', message: errorMessage(error) }))}>Повторить</button></div>
+              <div className="surface shop-empty"><h2>Магазин пока недоступен</h2><p>Не удалось загрузить данные магазина. Обнови страницу; если ошибка повторяется, проверь, что миграции 008 и 010 применены и backend перезапущен.</p><button className="button button--secondary" onClick={() => void api.shop(initData).then(setShopData).catch((error) => setNotice({ kind: 'error', title: 'Ошибка магазина', message: errorMessage(error) }))}>Повторить</button></div>
             ) : (
               <>
                 <div className="shop-section-heading"><div><p className="eyebrow">СЛУЧАЙНЫЙ ИНОМЕКОН</p><h2>Яйца</h2><p>Из яйца вылупляется случайный активный вид выбранной редкости. Сначала в каталоге должен быть хотя бы один такой иномекон.</p></div></div>
                 <div className="egg-grid">
                   {shopData.egg_offers.map((offer) => {
-                    const rarityLabel = RARITIES.find((item) => item.value === offer.rarity)?.label ?? offer.label;
-                    const emoji = ({ common: '🥚', rare: '🪺', epic: '💠', legendary: '🌟', mythic: '🌌' } as Record<Rarity, string>)[offer.rarity];
+                    const rarityLabel = offer.rarity === 'mystery' ? 'СЕКРЕТНОЕ ЯЙЦО' : RARITIES.find((item) => item.value === offer.rarity)?.label ?? offer.label;
+                    const emoji = ({ common: '🥚', rare: '🪺', epic: '💠', legendary: '🌟', mythic: '🌌', mystery: '🪐' } as Record<EggKind, string>)[offer.rarity];
                     const canAfford = (player?.gold ?? 0) >= offer.price_gold;
                     return <article className={`surface egg-card egg-card--${offer.rarity}`} key={offer.rarity}>
                       <div className="egg-card-art">{offer.image_url ? <img src={offer.image_url} alt={offer.label} /> : <span>{emoji}</span>}</div>
-                      <div className="egg-card-copy"><span className={`rarity-tag rarity-tag--${offer.rarity}`}>{rarityLabel}</span><h3>{offer.label}</h3><p>{offer.description || (offer.available ? `В каталоге ${offer.available_species} ${offer.available_species === 1 ? 'вид' : offer.available_species < 5 ? 'вида' : 'видов'} этой редкости.` : 'Пока нет активных иномеконов этой редкости.')}</p></div>
+                      <div className="egg-card-copy"><span className={`rarity-tag rarity-tag--${offer.rarity}`}>{rarityLabel}</span><h3>{offer.label}</h3><p>{offer.description || (offer.available ? `В каталоге ${offer.available_species} ${offer.available_species === 1 ? 'вид' : offer.available_species < 5 ? 'вида' : 'видов'} этой редкости.` : 'Пока нет активных иномеконов этой редкости.')}</p>{offer.rarity === 'mystery' && <div className="egg-rarity-chances"><strong>Шансы получить редкость</strong><div>{RARITIES.map((rarity) => <span key={rarity.value}><em>{rarity.label}</em><b>{offer.rarity_chances?.[rarity.value] ?? 0}%</b></span>)}</div><small>Выбор иномекона внутри редкости случайный. Если какой-то редкости нет в каталоге, шансы распределяются между доступными видами; если подходящих редкостей совсем нет по заданным весам — поровну.</small></div>}</div>
                       <div className="egg-card-buy"><strong>{formatNumber(offer.price_gold)} <small>золота</small></strong><button className="button button--primary" disabled={shopBusy || !offer.available || !canAfford} onClick={() => void buyEgg(offer.rarity)}>{shopBusy ? 'Подожди…' : !offer.available ? 'Нет в каталоге' : !canAfford ? 'Не хватает золота' : 'Купить яйцо'}</button></div>
                     </article>;
                   })}
@@ -856,7 +905,7 @@ export function App() {
                 {shopData.eggs.length ? <div className="owned-eggs-grid">
                   {shopData.eggs.map((egg) => <article className="surface owned-egg-card" key={egg.id}>
                     <div className={`owned-egg-icon owned-egg-icon--${egg.rarity}`} aria-hidden="true">{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.image_url ? <img src={shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.image_url} alt="" /> : '🥚'}</div>
-                    <div className="owned-egg-copy"><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span><strong>{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.label ?? `${RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity} яйцо`}</strong><small>Куплено {formatDate(egg.purchased_at)}</small></div>
+                    <div className="owned-egg-copy"><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{egg.rarity === 'mystery' ? 'Загадочное яйцо' : RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span><strong>{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.label ?? `${RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity} яйцо`}</strong><small>Куплено {formatDate(egg.purchased_at)}</small></div>
                     <button className="button button--primary" disabled={shopBusy} onClick={() => void hatchEgg(egg.id)}>{shopBusy ? 'Открываем…' : 'Вылупить'}</button>
                   </article>)}
                 </div> : <div className="surface shop-empty shop-empty--compact"><strong>Пока нет яиц</strong><span>Купи яйцо выше — оно появится здесь, и ты сможешь вылупить его в любой момент.</span></div>}
@@ -985,6 +1034,47 @@ export function App() {
                 <p className="creature-modal-footnote">Характеристики этого вида открыты в твоём каталоге.</p>
               </>
             )}
+          </section>
+        </div>
+      )}
+      {tutorialOpen && (
+        <div className="tutorial-modal-backdrop" role="presentation" onClick={closeTutorial}>
+          <section className="tutorial-modal" role="dialog" aria-modal="true" aria-labelledby="tutorial-modal-title" onClick={(event) => event.stopPropagation()}>
+            <button className="creature-modal-close" type="button" aria-label="Закрыть обучение" onClick={closeTutorial}>×</button>
+            <div className="tutorial-modal-topline"><span>БЫСТРЫЙ СТАРТ</span><span>{tutorialStep + 1} / 4</span></div>
+            <div className="tutorial-progress" aria-hidden="true">{[0, 1, 2, 3].map((step) => <span key={step} className={step <= tutorialStep ? 'is-active' : ''} />)}</div>
+            {tutorialStep === 0 && <>
+              <div className="tutorial-modal-art">🧬</div>
+              <h2 id="tutorial-modal-title">Добро пожаловать в Иномекопы!</h2>
+              <p>Твоя цель — собирать необычных существ, открывать редкие виды и развивать коллекцию. Золото нужно для яиц и ставок, а иномеконы постепенно приносят пассивный доход.</p>
+              <div className="tutorial-tip"><strong>Подсказка</strong><span>Это обучение можно в любой момент открыть кнопкой «Как играть» в верхнем меню.</span></div>
+            </>}
+            {tutorialStep === 1 && <>
+              <div className="tutorial-modal-art">🥚</div>
+              <h2 id="tutorial-modal-title">Купи яйцо в магазине</h2>
+              <p>Нажми «Магазин» в верхнем меню, выбери яйцо по цене и редкости и нажми «Купить яйцо». Для первого знакомства подойдёт обычное яйцо, а у загадочного сразу показаны шансы всех редкостей.</p>
+              <div className="tutorial-tip"><strong>Важно</strong><span>Покупка не добавляет иномекона сразу: яйцо сначала попадёт в рюкзак, и его нужно вылупить.</span></div>
+            </>}
+            {tutorialStep === 2 && <>
+              <div className="tutorial-modal-art">🐣</div>
+              <h2 id="tutorial-modal-title">Вылупи яйцо и получай доход</h2>
+              <p>В магазине пролистай страницу до раздела «Яйца в рюкзаке» и нажми «Вылупить». Новый иномекон появится в коллекции и добавит свой пассивный доход к твоему доходу в золоте за час.</p>
+              <div className="tutorial-tip"><strong>Не потеряйся</strong><span>После покупки мы покажем подсказку, которая укажет на инвентарь яиц и кнопку вылупления.</span></div>
+            </>}
+            {tutorialStep === 3 && <>
+              <div className="tutorial-modal-art">🎰</div>
+              <h2 id="tutorial-modal-title">Барабан удачи</h2>
+              <p>На главной можно поставить золото или конкретного иномекона. Результат и выплата рассчитываются сервером; прокрутка случайна и не гарантирует выигрыш. При победе главное число показывает, сколько золота начислено на баланс.</p>
+              <div className="tutorial-tip"><strong>Начни спокойно</strong><span>Проверь ставки и правила выплат перед прокруткой. Не ставь то, что не готов потерять.</span></div>
+            </>}
+            <div className="tutorial-modal-actions">
+              <button className="button button--secondary" type="button" disabled={tutorialStep === 0} onClick={() => setTutorialStep((step) => Math.max(0, step - 1))}>Назад</button>
+              {tutorialStep < 3
+                ? <button className="button button--primary" type="button" onClick={() => setTutorialStep((step) => Math.min(3, step + 1))}>Далее →</button>
+                : <button className="button button--primary" type="button" onClick={closeTutorial}>Начать игру</button>}
+            </div>
+            {tutorialStep === 1 && <button className="tutorial-direct-shop" type="button" onClick={goToShopFromTutorial}>Практика: перейти в магазин ↗</button>}
+            <button className="tutorial-skip" type="button" onClick={closeTutorial}>Пропустить обучение</button>
           </section>
         </div>
       )}

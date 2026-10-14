@@ -18,8 +18,11 @@ export type Creature = {
   obtained_at: string;
 };
 
+export type EggKind = Rarity | 'mystery';
+
 export type EggOffer = {
-  rarity: Rarity;
+  rarity: EggKind;
+  rarity_chances?: Partial<Record<Rarity, number>>;
   label: string;
   price_gold: number;
   image_url: string;
@@ -30,7 +33,8 @@ export type EggOffer = {
 };
 
 export type EggProduct = {
-  rarity: Rarity;
+  rarity: EggKind;
+  rarity_chances?: Partial<Record<Rarity, number>>;
   label: string;
   price_gold: number;
   image_url: string;
@@ -63,7 +67,7 @@ export type SubscriptionClaimResult = {
 
 export type OwnedEgg = {
   id: number;
-  rarity: Rarity;
+  rarity: EggKind;
   price_gold: number;
   purchased_at: string;
 };
@@ -287,6 +291,7 @@ let demoEggCatalog: EggProduct[] = [
   { rarity: 'epic', label: 'Эпическое яйцо', price_gold: 2500, image_url: '', description: 'Эпическая находка.', is_active: true, updated_at: new Date().toISOString() },
   { rarity: 'legendary', label: 'Легендарное яйцо', price_gold: 7500, image_url: '', description: 'Редкая возможность найти легендарный вид.', is_active: true, updated_at: new Date().toISOString() },
   { rarity: 'mythic', label: 'Мифическое яйцо', price_gold: 15000, image_url: '', description: 'Яйцо с мифическим иномеконом.', is_active: true, updated_at: new Date().toISOString() },
+  { rarity: 'mystery', rarity_chances: { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 }, label: 'Загадочное яйцо', price_gold: 1800, image_url: '', description: 'Содержит иномекона любой редкости. Мифические находки очень редкие.', is_active: true, updated_at: new Date().toISOString() },
 ];
 
 let demoSpecies: Species[] = [
@@ -421,11 +426,11 @@ export const api = {
   creatures: (initData: string) => request<{ items: Creature[] }>('/api/v1/me/creatures', initData),
   shop: (initData: string) => request<ShopData>('/api/v1/shop', initData),
   listAdminEggProducts: (initData: string) => request<{ items: EggProduct[] }>('/api/v1/admin/shop/eggs', initData),
-  updateAdminEggProduct: (initData: string, rarity: Rarity, payload: EggProductUpdateInput) =>
+  updateAdminEggProduct: (initData: string, rarity: EggKind, payload: EggProductUpdateInput) =>
     request<EggProduct>(`/api/v1/admin/shop/eggs/${rarity}`, initData, { method: 'PUT', body: payload }),
   subscriptionStatus: (initData: string) => request<SubscriptionStatus>('/api/v1/subscription', initData),
   claimSubscription: (initData: string) => request<SubscriptionClaimResult>('/api/v1/subscription/claim', initData, { method: 'POST', body: {} }),
-  buyEgg: (initData: string, rarity: Rarity) =>
+  buyEgg: (initData: string, rarity: EggKind) =>
     request<BuyEggResult>('/api/v1/shop/eggs/buy', initData, { method: 'POST', body: { rarity } }),
   hatchEgg: (initData: string, id: number) =>
     request<HatchEggResult>(`/api/v1/shop/eggs/${id}/hatch`, initData, { method: 'POST', body: {} }),
@@ -539,7 +544,9 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   if (path === '/api/v1/shop' && options.method !== 'POST') {
     return {
       egg_offers: demoEggCatalog.map((item) => {
-        const count = demoSpecies.filter((species) => species.is_active && species.rarity === item.rarity).length;
+        const count = item.rarity === 'mystery'
+          ? demoSpecies.filter((species) => species.is_active).length
+          : demoSpecies.filter((species) => species.is_active && species.rarity === item.rarity).length;
         return { ...item, available: item.is_active && count > 0, available_species: count };
       }),
       eggs: demoEggs,
@@ -549,9 +556,9 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   if (path === '/api/v1/admin/shop/eggs' && options.method !== 'PUT') {
     return { items: demoEggCatalog } as T;
   }
-  const adminEggMatch = path.match(/^\/api\/v1\/admin\/shop\/eggs\/(common|rare|epic|legendary|mythic)$/);
+  const adminEggMatch = path.match(/^\/api\/v1\/admin\/shop\/eggs\/(common|rare|epic|legendary|mythic|mystery)$/);
   if (adminEggMatch && options.method === 'PUT') {
-    const rarity = adminEggMatch[1] as Rarity;
+    const rarity = adminEggMatch[1] as EggKind;
     const payload = options.body as EggProductUpdateInput;
     const updated: EggProduct = { rarity, ...payload, updated_at: new Date().toISOString() };
     demoEggCatalog = demoEggCatalog.map((item) => item.rarity === rarity ? updated : item);
@@ -566,9 +573,11 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   }
 
   if (path === '/api/v1/shop/eggs/buy' && options.method === 'POST') {
-    const payload = options.body as { rarity: Rarity };
+    const payload = options.body as { rarity: EggKind };
     const product = demoEggCatalog.find((item) => item.rarity === payload.rarity);
-    const offer = demoSpecies.some((species) => species.is_active && species.rarity === payload.rarity);
+    const offer = payload.rarity === 'mystery'
+      ? demoSpecies.some((species) => species.is_active)
+      : demoSpecies.some((species) => species.is_active && species.rarity === payload.rarity);
     if (!product || !product.is_active || !offer) throw new APIError('Это яйцо сейчас недоступно.', 409, 'egg_unavailable');
     const price = product.price_gold;
     if (demoGold < price) throw new APIError('Не хватает золота для покупки этого яйца.', 409, 'insufficient_gold');
@@ -583,7 +592,19 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     const eggID = Number(hatchMatch[1]);
     const egg = demoEggs.find((item) => item.id === eggID);
     if (!egg) throw new APIError('Это яйцо не найдено в твоём инвентаре.', 404, 'egg_not_owned');
-    const possible = demoSpecies.filter((item) => item.is_active && item.rarity === egg.rarity);
+    let desiredRarity: Rarity = egg.rarity === 'mystery' ? 'common' : egg.rarity;
+    if (egg.rarity === 'mystery') {
+      const weights = demoEggCatalog.find((item) => item.rarity === 'mystery')?.rarity_chances ?? { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 };
+      const possibleRarities = (Object.entries(weights) as [Rarity, number][]).filter(([rarity, weight]) => weight > 0 && demoSpecies.some((item) => item.is_active && item.rarity === rarity));
+      const totalWeight = possibleRarities.reduce((sum, [, weight]) => sum + weight, 0);
+      if (totalWeight <= 0) throw new APIError('В каталоге нет активных иномеконов. Яйцо сохранено.', 409);
+      let roll = Math.random() * totalWeight;
+      for (const [rarity, weight] of possibleRarities) {
+        roll -= weight;
+        if (roll < 0) { desiredRarity = rarity; break; }
+      }
+    }
+    const possible = demoSpecies.filter((item) => item.is_active && item.rarity === desiredRarity);
     if (!possible.length) throw new APIError('В каталоге нет активных иномеконов этой редкости. Яйцо сохранено.', 409);
     const picked = possible[Math.floor(Math.random() * possible.length)];
     demoEggs = demoEggs.filter((item) => item.id !== eggID);
