@@ -60,3 +60,14 @@ func TestCreatureStakeOutcomeRules(t *testing.T) {
 		})
 	}
 }
+
+func TestFeaturedCreatureGetsFiveTimesSelectionWeight(t *testing.T) {
+	featured := creatureSelectionWeight(creatureOption{slug: "main", featured: true})
+	normal := creatureSelectionWeight(creatureOption{slug: "other", featured: false})
+	if featured != 5 {
+		t.Fatalf("featured weight = %d; want 5", featured)
+	}
+	if normal != 1 {
+		t.Fatalf("normal weight = %d; want 1", normal)
+	}
+}

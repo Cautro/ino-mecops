@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api } from './api';
-import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
+import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggProduct, EggProductUpdateInput, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
 
 type AdminPanelProps = {
   initData: string;
   onCatalogChanged: () => Promise<void>;
 };
-type Section = 'species' | 'batches';
+type Section = 'species' | 'eggs' | 'batches';
 
 const RARITY_OPTIONS: { value: Rarity; label: string }[] = [
   { value: 'common', label: 'Обычная' },
@@ -19,7 +19,7 @@ const RARITY_OPTIONS: { value: Rarity; label: string }[] = [
 
 const blankSpecies = (abilityID = 1): SpeciesInput => ({
   slug: '', name: '', description: '', image_url: '', sell_price_gold: 0, rarity: 'common', passive_gold_per_hour: 5,
-  health: 100, damage: 10, crit_chance: 5, ability_id: abilityID,
+  health: 100, damage: 10, crit_chance: 5, ability_id: abilityID, is_featured: false,
 });
 const blankBatch = (): CreateBatchInput => ({
   label: '', count: 20, reward_name: '', reward_rarity: 'Обычная', reward_gold: 50,
@@ -44,6 +44,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   const [section, setSection] = useState<Section>('species');
   const [species, setSpecies] = useState<Species[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
+  const [eggProducts, setEggProducts] = useState<EggProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -59,12 +60,13 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [speciesResponse, batchResponse] = await Promise.all([
-        api.listAdminSpecies(initData), api.listBatches(initData),
+      const [speciesResponse, batchResponse, eggResponse] = await Promise.all([
+        api.listAdminSpecies(initData), api.listBatches(initData), api.listAdminEggProducts(initData),
       ]);
       const loadedSpecies = speciesResponse.items ?? [];
       setSpecies(loadedSpecies);
       setBatches(batchResponse.items ?? []);
+      setEggProducts(eggResponse.items ?? []);
       const abilityID = loadedSpecies[0]?.ability_id ?? 1;
       setSpeciesForm((current) => current.ability_id ? current : { ...current, ability_id: abilityID });
     } catch (caught) { setError(explain(caught)); }
@@ -83,7 +85,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     setSpeciesForm({
       slug: item.slug, name: item.name, description: item.description, image_url: item.image_url, sell_price_gold: item.sell_price_gold,
       rarity: item.rarity, passive_gold_per_hour: item.passive_gold_per_hour, health: item.health,
-      damage: item.damage, crit_chance: item.crit_chance, ability_id: item.ability_id,
+      damage: item.damage, crit_chance: item.crit_chance, ability_id: item.ability_id, is_featured: item.is_featured,
     });
     setSpeciesFormOpen(true); setError(''); setSuccess('');
   };
@@ -102,10 +104,10 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     } catch (caught) { setError(explain(caught)); }
     finally { setBusy(false); }
   };
-  const archiveSpecies = async (item: Species) => {
-    if (!window.confirm(`Архивировать «${item.name}»? История игроков сохранится, но вид нельзя будет выбрать для новых наград.`)) return;
+  const deleteSpecies = async (item: Species) => {
+    if (!window.confirm(`Удалить «${item.name}» НАВСЕГДА? Все экземпляры исчезнут из коллекций игроков, а неиспользованные промокоды с этим иномеконом будут отозваны. Отменить это действие нельзя.`)) return;
     setBusy(true); setError(''); setSuccess('');
-    try { await api.archiveSpecies(initData, item.id); setSuccess(`«${item.name}» перемещён в архив.`); await refresh(); await onCatalogChanged(); }
+    try { await api.deleteSpecies(initData, item.id); setSuccess(`«${item.name}» окончательно удалён из каталога.`); await refresh(); await onCatalogChanged(); }
     catch (caught) { setError(explain(caught)); }
     finally { setBusy(false); }
   };
@@ -122,6 +124,31 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
       setSuccess('Изображение загружено. Не забудь сохранить иномекона.');
     } catch (caught) { setError(explain(caught)); }
     finally { setImageBusy(false); }
+  };
+
+  const uploadEggImage = async (rarity: Rarity, file?: File) => {
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/gif'].includes(file.type)) { setError('Выбери изображение PNG, JPEG или GIF.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('Размер изображения не должен превышать 5 МБ.'); return; }
+    setImageBusy(true); setError(''); setSuccess('');
+    try {
+      const result = await api.uploadImage(initData, file);
+      setEggProducts((items) => items.map((item) => item.rarity === rarity ? { ...item, image_url: result.image_url } : item));
+      setSuccess('Изображение яйца загружено. Нажми «Сохранить яйцо».');
+    } catch (caught) { setError(explain(caught)); }
+    finally { setImageBusy(false); }
+  };
+
+  const saveEggProduct = async (item: EggProduct) => {
+    setBusy(true); setError(''); setSuccess('');
+    const payload: EggProductUpdateInput = { label: item.label, price_gold: item.price_gold, image_url: item.image_url, description: item.description, is_active: item.is_active };
+    try {
+      const updated = await api.updateAdminEggProduct(initData, item.rarity, payload);
+      setEggProducts((items) => items.map((egg) => egg.rarity === updated.rarity ? updated : egg));
+      setSuccess(`Настройки «${updated.label}» сохранены.`);
+      await onCatalogChanged();
+    } catch (caught) { setError(explain(caught)); }
+    finally { setBusy(false); }
   };
 
   const createBatch = async (event: FormEvent<HTMLFormElement>) => {
@@ -168,7 +195,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   return (
     <section className="subpage admin-page">
       <div className="subpage-heading">
-        <div><p className="eyebrow">УПРАВЛЕНИЕ ПРОЕКТОМ</p><h1>Админ-панель</h1><p className="page-lead">Каталог иномеконов и пользовательские награды для кодов активации.</p></div>
+        <div><p className="eyebrow">УПРАВЛЕНИЕ ПРОЕКТОМ</p><h1>Админ-панель</h1><p className="page-lead">Каталог существ, оформление яиц и пользовательские награды.</p></div>
         <button className="button button--secondary" onClick={() => void refresh()} disabled={busy || loading}>↻ Обновить</button>
       </div>
 
@@ -180,6 +207,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
 
       <nav className="admin-tabs" aria-label="Разделы панели">
         <button className={section === 'species' ? 'is-active' : ''} onClick={() => setSection('species')}>Иномеконы</button>
+        <button className={section === 'eggs' ? 'is-active' : ''} onClick={() => setSection('eggs')}>Яйца магазина</button>
         <button className={section === 'batches' ? 'is-active' : ''} onClick={() => setSection('batches')}>Награды и коды</button>
       </nav>
 
@@ -187,13 +215,14 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
       {success && <div className="admin-message admin-message--success" role="status">{success}</div>}
       {loading ? <div className="surface admin-empty">Загружаем данные панели…</div> : <>
         {section === 'species' && <>
-          <div className="admin-section-heading"><div><h2>Каталог иномеконов</h2><p>Боевые характеристики больше не настраиваются здесь. Архивирование сохраняет историю игроков.</p></div><button className="button button--primary" onClick={resetSpeciesForm}>+ Добавить иномекона</button></div>
+          <div className="admin-section-heading"><div><h2>Каталог иномеконов</h2><p>Настраивай виды, цену продажи и единственного основного иномекона. Основной получает повышенный шанс только в наградах барабана.</p></div><button className="button button--primary" onClick={resetSpeciesForm}>+ Добавить иномекона</button></div>
           {speciesFormOpen && <form className="surface admin-form" onSubmit={saveSpecies}>
             <div className="admin-form-heading"><h3>{editingSpeciesID === null ? 'Новый иномекон' : `Редактирование: ${speciesForm.name}`}</h3><button type="button" className="icon-button" onClick={() => setSpeciesFormOpen(false)} aria-label="Закрыть">×</button></div>
             <div className="admin-form-grid">
               {field('Системный ID (slug)', speciesForm.slug, (v) => setSpeciesForm((s) => ({ ...s, slug: v.toLowerCase().replace(/[^a-z0-9-]/g, '') })), { required: editingSpeciesID === null, disabled: editingSpeciesID !== null, placeholder: 'ino-sprout' })}
               {field('Название', speciesForm.name, (v) => setSpeciesForm((s) => ({ ...s, name: v })), { required: true })}
               <label className="field"><span className="field-label">Редкость иномекона</span><select value={speciesForm.rarity} onChange={(e) => setSpeciesForm((s) => ({ ...s, rarity: e.target.value as Rarity }))}>{RARITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+              <label className="field admin-checkbox-field"><input type="checkbox" checked={speciesForm.is_featured} onChange={(e) => setSpeciesForm((s) => ({ ...s, is_featured: e.target.checked }))} /><span><strong>Основной иномекон</strong><small>Получает 5× вес при выборе награды на барабане. Основной может быть только один.</small></span></label>
               {field('Пассивный доход (золота/час)', speciesForm.passive_gold_per_hour, (v) => setSpeciesForm((s) => ({ ...s, passive_gold_per_hour: Number(v) })), { type: 'number', min: 0, max: 10000000, required: true })}
               {field('Цена продажи (золота)', speciesForm.sell_price_gold, (v) => setSpeciesForm((s) => ({ ...s, sell_price_gold: Number(v) })), { type: 'number', min: 0, max: 1000000000, required: true })}
               <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={speciesForm.description} onChange={(e) => setSpeciesForm((s) => ({ ...s, description: e.target.value }))} rows={3} maxLength={1000} /></label>
@@ -204,10 +233,27 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
           <div className="admin-list">
             {species.map((item) => <article className={`surface admin-item ${!item.is_active ? 'admin-item--archived' : ''}`} key={item.id}>
               {item.image_url ? <img src={item.image_url} alt="" className="admin-item-image" /> : <div className="admin-item-image admin-item-image--empty">◇</div>}
-              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small>{item.description && <p>{item.description}</p>}</div>
-              <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => editSpecies(item)}>Изменить</button>{item.is_active && <button className="button button--ghost button--small" onClick={() => void archiveSpecies(item)} disabled={busy}>В архив</button>}</div>
+              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}{item.is_featured ? ' ★' : ''}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small>{item.description && <p>{item.description}</p>}</div>
+              <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => editSpecies(item)}>Изменить</button><button className="button button--danger button--small" onClick={() => void deleteSpecies(item)} disabled={busy}>Удалить навсегда</button></div>
             </article>)}
             {!species.length && <div className="surface admin-empty">Каталог пока пуст.</div>}
+          </div>
+        </>}
+
+        {section === 'eggs' && <>
+          <div className="admin-section-heading"><div><h2>Оформление и цены яиц</h2><p>Настраивай название, цену, картинку, описание и доступность каждого яйца. Цена применяется к новым покупкам; купленные яйца остаются в инвентаре.</p></div></div>
+          <div className="egg-admin-grid">
+            {eggProducts.map((egg) => <form className="surface egg-admin-card" key={egg.rarity} onSubmit={(event) => { event.preventDefault(); void saveEggProduct(egg); }}>
+              <div className="admin-form-heading"><div><h3>{egg.label}</h3><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{RARITY_OPTIONS.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span></div><label className="admin-inline-toggle"><input type="checkbox" checked={egg.is_active} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, is_active: event.target.checked } : item))} /> Доступно</label></div>
+              <div className="egg-admin-preview">{egg.image_url ? <img src={egg.image_url} alt={egg.label} /> : <span>🥚</span>}</div>
+              <div className="admin-form-grid">
+                {field('Название яйца', egg.label, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, label: v } : item)), { required: true, maxLength: 80 })}
+                {field('Цена (золота)', egg.price_gold, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, price_gold: Number(v) } : item)), { type: 'number', min: 1, max: 100000000, required: true })}
+                <label className="field admin-field-wide"><span className="field-label">URL картинки</span><input value={egg.image_url} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, image_url: event.target.value } : item))} placeholder="/uploads/egg.png или https://…" /><input className="admin-file-input" type="file" accept="image/png,image/jpeg,image/gif" disabled={imageBusy} onChange={(event) => { const file = event.target.files?.[0]; void uploadEggImage(egg.rarity, file); event.currentTarget.value = ''; }} /><small>{imageBusy ? 'Загружаем изображение…' : 'PNG, JPEG или GIF до 5 МБ. Загрузка сохранит файл, затем нажми «Сохранить яйцо».'}</small></label>
+                <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={egg.description} rows={3} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, description: event.target.value } : item))} /></label>
+              </div>
+              <div className="admin-form-actions"><button className="button button--primary" disabled={busy || imageBusy}>{busy ? 'Сохраняем…' : 'Сохранить яйцо'}</button></div>
+            </form>)}
           </div>
         </>}
 

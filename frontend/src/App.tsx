@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
 import AdminPanel from './AdminPanel';
-import type { CollectionSpecies, Creature, HatchEggResult, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult } from './api';
+import type { CollectionSpecies, Creature, HatchEggResult, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult, SubscriptionClaimResult, SubscriptionStatus } from './api';
 
 // ==================== Типы и константы ====================
 
@@ -101,6 +101,7 @@ export function App() {
   const initData = telegram?.initData ?? '';
   const launchCode = getStartParam(telegram);
   const autoRedeemAttempted = useRef('');
+  const subscriptionAutoOpened = useRef(false);
 
   const [page, setPage] = useState<Page>('home');
   const [isAdmin, setIsAdmin] = useState(false);
@@ -108,6 +109,10 @@ export function App() {
   const [ownedCreatures, setOwnedCreatures] = useState<Creature[]>([]);
   const [species, setSpecies] = useState<CollectionSpecies[]>([]);
   const [shopData, setShopData] = useState<ShopData | null>(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
+  const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
+  const [subscriptionBusy, setSubscriptionBusy] = useState(false);
+  const [subscriptionError, setSubscriptionError] = useState('');
   const [shopBusy, setShopBusy] = useState(false);
   const [lastHatch, setLastHatch] = useState<HatchEggResult | null>(null);
   const [confirmSellID, setConfirmSellID] = useState<number | null>(null);
@@ -190,6 +195,29 @@ export function App() {
         setShopData(await api.shop(initData));
       } catch {
         setShopData(null);
+      }
+      try {
+        const subscription = await api.subscriptionStatus(initData);
+        setSubscriptionStatus(subscription);
+        if (subscription.enabled && !subscription.claimed && !subscriptionAutoOpened.current) {
+          // Show the automatic prompt only once per Telegram account. The “Бонус” tab
+          // remains available after dismissal so the player can return later.
+          const promptKey = `inomecops:subscription-prompt-seen:${playerResponse.telegram_id}`;
+          let promptSeen = false;
+          try {
+            promptSeen = window.localStorage.getItem(promptKey) === '1';
+          } catch {
+            // localStorage can be disabled in some embedded browsers; the ref below
+            // still prevents repeated prompts while this app instance is mounted.
+          }
+          if (!promptSeen) {
+            setSubscriptionModalOpen(true);
+            try { window.localStorage.setItem(promptKey, '1'); } catch { /* ignore storage restrictions */ }
+          }
+          subscriptionAutoOpened.current = true;
+        }
+      } catch {
+        setSubscriptionStatus(null);
       }
       try {
         // The backend is the authority: non-admin users receive 403 and won't see this tab.
@@ -284,6 +312,39 @@ export function App() {
     setPage(next);
     setNotice(null);
     telegram?.HapticFeedback?.selectionChanged();
+  };
+
+  const closeSubscriptionModal = () => setSubscriptionModalOpen(false);
+
+  const claimSubscriptionReward = async () => {
+    if (subscriptionBusy || !subscriptionStatus?.enabled) return;
+    setSubscriptionBusy(true);
+    setSubscriptionError('');
+    try {
+      const result: SubscriptionClaimResult = await api.claimSubscription(initData);
+      const [freshStatus, freshPlayer, freshCreatures, freshCatalogue] = await Promise.all([
+        api.subscriptionStatus(initData), api.me(initData), api.creatures(initData), api.collectionCatalog(initData),
+      ]);
+      setSubscriptionStatus(freshStatus);
+      setPlayer(freshPlayer);
+      setOwnedCreatures(freshCreatures.items ?? []);
+      setSpecies(freshCatalogue.items ?? []);
+      if (result.already_claimed) {
+        setSubscriptionError('Эта награда уже была получена. Повторно она не начисляется.');
+      } else {
+        const rewards = [
+          result.gold_added > 0 ? `${formatNumber(result.gold_added)} золота` : '',
+          result.creature_name ? `иномекон «${result.creature_name}»` : '',
+        ].filter(Boolean).join(' и ');
+        setSubscriptionError(`Награда получена${rewards ? `: ${rewards}` : ''}!`);
+        telegram?.HapticFeedback?.notificationOccurred('success');
+      }
+    } catch (error) {
+      setSubscriptionError(errorMessage(error));
+      telegram?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      setSubscriptionBusy(false);
+    }
   };
 
   const playSlot = async () => {
@@ -472,6 +533,7 @@ export function App() {
           <button className={page === 'shop' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('shop')}>
             Магазин <span className="nav-count">{shopData?.eggs.length ?? 0}</span>
           </button>
+          {subscriptionStatus?.enabled && <button className="nav-item subscription-nav-item" onClick={() => { setSubscriptionError(''); setSubscriptionModalOpen(true); }}>Бонус</button>}
           {isAdmin && <button className={page === 'admin' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('admin')}>Администрирование</button>}
         </nav>
         <div className="topbar-user">
@@ -756,8 +818,8 @@ export function App() {
                     const emoji = ({ common: '🥚', rare: '🪺', epic: '💠', legendary: '🌟', mythic: '🌌' } as Record<Rarity, string>)[offer.rarity];
                     const canAfford = (player?.gold ?? 0) >= offer.price_gold;
                     return <article className={`surface egg-card egg-card--${offer.rarity}`} key={offer.rarity}>
-                      <div className="egg-card-art"><span>{emoji}</span></div>
-                      <div className="egg-card-copy"><span className={`rarity-tag rarity-tag--${offer.rarity}`}>{rarityLabel}</span><h3>{offer.label} яйцо</h3><p>{offer.available ? `В каталоге ${offer.available_species} ${offer.available_species === 1 ? 'вид' : offer.available_species < 5 ? 'вида' : 'видов'} этой редкости.` : 'Пока нет активных иномеконов этой редкости.'}</p></div>
+                      <div className="egg-card-art">{offer.image_url ? <img src={offer.image_url} alt={offer.label} /> : <span>{emoji}</span>}</div>
+                      <div className="egg-card-copy"><span className={`rarity-tag rarity-tag--${offer.rarity}`}>{rarityLabel}</span><h3>{offer.label}</h3><p>{offer.description || (offer.available ? `В каталоге ${offer.available_species} ${offer.available_species === 1 ? 'вид' : offer.available_species < 5 ? 'вида' : 'видов'} этой редкости.` : 'Пока нет активных иномеконов этой редкости.')}</p></div>
                       <div className="egg-card-buy"><strong>{formatNumber(offer.price_gold)} <small>золота</small></strong><button className="button button--primary" disabled={shopBusy || !offer.available || !canAfford} onClick={() => void buyEgg(offer.rarity)}>{shopBusy ? 'Подожди…' : !offer.available ? 'Нет в каталоге' : !canAfford ? 'Не хватает золота' : 'Купить яйцо'}</button></div>
                     </article>;
                   })}
@@ -766,8 +828,8 @@ export function App() {
                 <div className="shop-section-heading shop-section-heading--inventory"><div><p className="eyebrow">ТВОЙ ИНВЕНТАРЬ</p><h2>Яйца в рюкзаке <span className="nav-count">{shopData.eggs.length}</span></h2><p>Вылупление бесплатно. Внутри будет случайный иномекон соответствующей редкости.</p></div></div>
                 {shopData.eggs.length ? <div className="owned-eggs-grid">
                   {shopData.eggs.map((egg) => <article className="surface owned-egg-card" key={egg.id}>
-                    <div className={`owned-egg-icon owned-egg-icon--${egg.rarity}`} aria-hidden="true">🥚</div>
-                    <div className="owned-egg-copy"><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span><strong>{RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity} яйцо</strong><small>Куплено {formatDate(egg.purchased_at)}</small></div>
+                    <div className={`owned-egg-icon owned-egg-icon--${egg.rarity}`} aria-hidden="true">{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.image_url ? <img src={shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.image_url} alt="" /> : '🥚'}</div>
+                    <div className="owned-egg-copy"><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span><strong>{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.label ?? `${RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity} яйцо`}</strong><small>Куплено {formatDate(egg.purchased_at)}</small></div>
                     <button className="button button--primary" disabled={shopBusy} onClick={() => void hatchEgg(egg.id)}>{shopBusy ? 'Открываем…' : 'Вылупить'}</button>
                   </article>)}
                 </div> : <div className="surface shop-empty shop-empty--compact"><strong>Пока нет яиц</strong><span>Купи яйцо выше — оно появится здесь, и ты сможешь вылупить его в любой момент.</span></div>}
@@ -892,11 +954,33 @@ export function App() {
                   <div className="creature-stat"><span>Здоровье</span><strong>{formatNumber(selectedSpecies.health ?? 0)}</strong></div>
                   <div className="creature-stat"><span>Урон</span><strong>{formatNumber(selectedSpecies.damage ?? 0)}</strong></div>
                   <div className="creature-stat"><span>Шанс крит. удара</span><strong>{formatNumber(selectedSpecies.crit_chance ?? 0)}%</strong></div>
-                  <div className="creature-stat creature-stat--wide"><span>Способность</span><strong>{selectedSpecies.ability_name ?? 'Не указана'}</strong></div>
                 </div>
                 <p className="creature-modal-footnote">Характеристики этого вида открыты в твоём каталоге.</p>
               </>
             )}
+          </section>
+        </div>
+      )}
+      {subscriptionModalOpen && subscriptionStatus?.enabled && (
+        <div className="subscription-modal-backdrop" role="presentation" onClick={closeSubscriptionModal}>
+          <section className="subscription-modal" role="dialog" aria-modal="true" aria-labelledby="subscription-modal-title" onClick={(event) => event.stopPropagation()}>
+            <button className="creature-modal-close" type="button" aria-label="Закрыть" onClick={closeSubscriptionModal}>×</button>
+            <div className="subscription-modal-mark" aria-hidden="true">✦</div>
+            {subscriptionStatus.claimed ? <p className="eyebrow">БОНУС ЗА ПОДПИСКУ</p> : <p className="eyebrow">ПОДДЕРЖИ ПРОЕКТ</p>}
+            <h2 id="subscription-modal-title">{subscriptionStatus.claimed ? 'Награда уже получена' : subscriptionStatus.title}</h2>
+            <p className="subscription-modal-message">{subscriptionStatus.message}</p>
+            <div className="subscription-reward-box">
+              <span>ТВОЯ НАГРАДА</span>
+              <strong>{[subscriptionStatus.reward_gold > 0 ? `${formatNumber(subscriptionStatus.reward_gold)} золота` : '', subscriptionStatus.reward_creature_name ? subscriptionStatus.reward_creature_name : subscriptionStatus.reward_creature_slug ? 'Иномекон из каталога' : ''].filter(Boolean).join(' + ') || 'Бонус за участие'}</strong>
+              <small>Начисляется один раз на аккаунт.</small>
+            </div>
+            {subscriptionError && <div className={`subscription-feedback${subscriptionStatus.claimed ? ' is-success' : ''}`} role="status">{subscriptionError}</div>}
+            {!subscriptionStatus.claimed && <div className="subscription-modal-actions">
+              <a className="button button--secondary" href={subscriptionStatus.url} target="_blank" rel="noreferrer">Подписаться на канал ↗</a>
+              <button className="button button--primary" disabled={subscriptionBusy} onClick={() => void claimSubscriptionReward()}>{subscriptionBusy ? 'Проверяем…' : 'Проверить подписку и получить'}</button>
+            </div>}
+            {subscriptionStatus.claimed && <button className="button button--primary subscription-close-action" onClick={closeSubscriptionModal}>Вернуться в игру</button>}
+            {!subscriptionStatus.claimed && <button className="subscription-later" onClick={closeSubscriptionModal}>Не сейчас — вернусь позже</button>}
           </section>
         </div>
       )}

@@ -6,14 +6,73 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/cautro/inomecops/backend/internal/features/auth"
 	"github.com/cautro/inomecops/backend/internal/services"
 )
 
-type Handler struct{ store *Store }
+type Handler struct {
+	store    *Store
+	adminIDs map[int64]struct{}
+}
 
-func NewHandler(db *sql.DB) *Handler { return &Handler{store: NewStore(db)} }
+func NewHandler(db *sql.DB, adminIDs map[int64]struct{}) *Handler {
+	admins := make(map[int64]struct{}, len(adminIDs))
+	for id := range adminIDs {
+		admins[id] = struct{}{}
+	}
+	return &Handler{store: NewStore(db), adminIDs: admins}
+}
+
+func (h *Handler) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	user, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		services.WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация.")
+		return false
+	}
+	if _, allowed := h.adminIDs[user.ID]; !allowed {
+		services.WriteError(w, http.StatusForbidden, "forbidden", "Нет прав на изменение магазина.")
+		return false
+	}
+	return true
+}
+
+func (h *Handler) ListAdminEggs(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	items, err := h.store.ListEggProducts(r.Context())
+	if err != nil {
+		log.Printf("admin list egg products failed: %v", err)
+		services.WriteError(w, http.StatusInternalServerError, "egg_catalog_failed", "Не удалось загрузить настройки яиц.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) UpdateAdminEgg(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	rarity := strings.TrimSpace(r.PathValue("rarity"))
+	var input EggProductUpdateInput
+	if err := services.DecodeJSON(w, r, &input); err != nil {
+		services.WriteError(w, http.StatusBadRequest, "bad_request", "Некорректные настройки яйца.")
+		return
+	}
+	item, err := h.store.UpdateEggProduct(r.Context(), rarity, input)
+	if err != nil {
+		if errors.Is(err, ErrInvalidEggProduct) || errors.Is(err, ErrInvalidRarity) {
+			services.WriteError(w, http.StatusBadRequest, "invalid_egg_product", "Проверь название, цену, описание и изображение яйца.")
+			return
+		}
+		log.Printf("admin update egg product failed: rarity=%q err=%v", rarity, err)
+		services.WriteError(w, http.StatusInternalServerError, "egg_product_update_failed", "Не удалось сохранить настройки яйца.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, item)
+}
 
 func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.IdentityFromContext(r.Context())

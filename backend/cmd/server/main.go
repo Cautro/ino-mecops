@@ -18,6 +18,7 @@ import (
 	"github.com/cautro/inomecops/backend/internal/features/codes"
 	"github.com/cautro/inomecops/backend/internal/features/gameplay"
 	"github.com/cautro/inomecops/backend/internal/features/shop"
+	"github.com/cautro/inomecops/backend/internal/features/subscription"
 	"github.com/cautro/inomecops/backend/internal/router"
 	"github.com/cautro/inomecops/backend/internal/telegram"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -63,18 +64,20 @@ func main() {
 	catalogUseCase := catalog.NewUseCase(catalogRepo)
 	catalogHandler := catalog.NewHandler(catalogUseCase, cfg.AdminIDs, cfg.UploadDir)
 	gameplayHandler := gameplay.NewHandler(db)
-	shopHandler := shop.NewHandler(db)
+	shopHandler := shop.NewHandler(db, cfg.AdminIDs)
+	subscriptionHandler := subscription.NewHandler(db, cfg.BotToken, cfg.SubscriptionURL, cfg.SubscriptionChatID, cfg.SubscriptionTitle, cfg.SubscriptionMessage, cfg.SubscriptionRewardGold, cfg.SubscriptionRewardCreatureSlug)
 
 	handler := router.New(router.Dependencies{
-		Auth:      authHandler,
-		Codes:     codesHandler,
-		Admin:     adminHandler,
-		Catalog:   catalogHandler,
-		Gameplay:  gameplayHandler,
-		Shop:      shopHandler,
-		UploadDir: cfg.UploadDir,
-		DB:        db,
-		Log:       logger,
+		Auth:         authHandler,
+		Codes:        codesHandler,
+		Admin:        adminHandler,
+		Catalog:      catalogHandler,
+		Gameplay:     gameplayHandler,
+		Shop:         shopHandler,
+		Subscription: subscriptionHandler,
+		UploadDir:    cfg.UploadDir,
+		DB:           db,
+		Log:          logger,
 	})
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

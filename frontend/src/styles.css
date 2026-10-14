@@ -3723,3 +3723,79 @@ button.species-card--catalog:focus-visible {
   .hatch-result { align-items: flex-start; }
   .hatch-result > .species-image, .hatch-result > .species-image--empty { flex-basis: 64px; width: 64px; height: 64px; }
 }
+
+/* ==================== Subscription prompt and editable egg catalog ==================== */
+.subscription-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  background: rgba(1, 4, 10, .78);
+  backdrop-filter: blur(12px);
+}
+.subscription-modal {
+  position: relative;
+  width: min(100%, 470px);
+  max-height: min(88dvh, 760px);
+  overflow-y: auto;
+  padding: 30px;
+  border: 1px solid #2b4160;
+  border-radius: 24px;
+  background: radial-gradient(420px 220px at 50% 0%, rgba(105, 183, 255, .13), transparent 72%), linear-gradient(160deg, #111c2d, #090e17 78%);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .55);
+  text-align: center;
+}
+.subscription-modal-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 16px;
+  border: 1px solid rgba(105, 183, 255, .45);
+  border-radius: 17px;
+  background: var(--accent-pale);
+  color: var(--accent);
+  font-size: 26px;
+}
+.subscription-modal .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 10px; letter-spacing: .16em; font-weight: 850; }
+.subscription-modal h2 { margin: 0; padding: 0 10px; font-size: clamp(22px, 5vw, 30px); line-height: 1.2; letter-spacing: -.035em; }
+.subscription-modal-message { margin: 14px 0 20px; color: #aebbd0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+.subscription-reward-box { display: grid; gap: 7px; padding: 16px; border: 1px solid rgba(105, 183, 255, .28); border-radius: 15px; background: rgba(105, 183, 255, .07); }
+.subscription-reward-box > span { color: #7f98b9; font-size: 10px; font-weight: 850; letter-spacing: .13em; }
+.subscription-reward-box > strong { color: #f0d17d; font-size: 19px; }
+.subscription-reward-box > small { color: var(--muted); font-size: 11px; }
+.subscription-modal-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; margin-top: 18px; }
+.subscription-modal-actions .button { width: 100%; min-height: 45px; justify-content: center; }
+.subscription-feedback { margin-top: 14px; padding: 11px 12px; border: 1px solid rgba(255, 150, 141, .35); border-radius: 11px; background: rgba(161, 62, 72, .12); color: #ffc3bd; font-size: 12px; line-height: 1.55; }
+.subscription-feedback.is-success { border-color: rgba(112, 218, 169, .32); background: rgba(61, 150, 108, .12); color: #a2f0c6; }
+.subscription-later { display: inline-flex; margin: 18px auto 0; padding: 8px 10px; border: 0; background: transparent; color: #92a2ba; font-size: 12px; }
+.subscription-later:hover { color: var(--ink); }
+.subscription-close-action { width: 100%; margin-top: 18px; }
+.subscription-nav-item { border-color: rgba(105, 183, 255, .3); }
+
+.egg-admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.egg-admin-card { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 16px; border-color: #2b3d57; background: linear-gradient(150deg, #101a2a, #0a101a 78%); }
+.egg-admin-card-heading { display: flex; align-items: center; gap: 12px; }
+.egg-admin-card-heading h3 { margin: 0; font-size: 16px; }
+.egg-admin-preview { display: grid; place-items: center; flex: 0 0 60px; width: 60px; height: 60px; overflow: hidden; border: 1px solid #344660; border-radius: 13px; background: #080d15; color: #b4c7e1; font-size: 29px; }
+.egg-admin-preview img { width: 100%; height: 100%; object-fit: contain; }
+.egg-admin-card .field { display: grid; gap: 7px; min-width: 0; }
+.egg-admin-card .field input:not([type="checkbox"]), .egg-admin-card .field textarea { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 11px; color: var(--ink); background: #0b111c; }
+.egg-admin-card .field textarea { resize: vertical; }
+.egg-admin-image-field { display: grid; gap: 8px; }
+.egg-admin-image-field small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.egg-admin-card .admin-form-actions { margin-top: 3px; }
+.admin-checkbox-field { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(7, 13, 23, .45); }
+.admin-checkbox-field input { flex: 0 0 auto; width: 17px; height: 17px; margin-top: 2px; accent-color: var(--accent); }
+.admin-checkbox-field > span { display: grid; gap: 4px; }
+.admin-checkbox-field strong { color: var(--ink); font-size: 12px; }
+.admin-checkbox-field small { color: var(--muted); font-size: 11px; line-height: 1.55; }
+@media (max-width: 760px) {
+  .subscription-modal { padding: 25px 19px; border-radius: 20px; }
+  .egg-admin-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.admin-inline-toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-strong); font-size: 11px; white-space: nowrap; }
+.admin-inline-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }

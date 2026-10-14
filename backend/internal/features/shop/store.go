@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -15,43 +18,75 @@ var (
 	ErrCreatureNotOwned   = errors.New("creature not owned")
 	ErrCreatureNotForSale = errors.New("creature is not for sale")
 	ErrPlayerNotFound     = errors.New("player not found")
+	ErrInvalidEggProduct  = errors.New("invalid egg product")
 )
 
 type Store struct{ db *sql.DB }
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
-type rarityConfig struct {
-	rarity string
-	label  string
-	price  int64
+var rarityOrder = map[string]int{
+	"common": 1, "rare": 2, "epic": 3, "legendary": 4, "mythic": 5,
 }
 
-var eggRarities = []rarityConfig{
-	{rarity: "common", label: "Обычное", price: 250},
-	{rarity: "rare", label: "Редкое", price: 1000},
-	{rarity: "epic", label: "Эпическое", price: 2500},
-	{rarity: "legendary", label: "Легендарное", price: 7500},
-	{rarity: "mythic", label: "Мифическое", price: 15000},
+func validEggRarity(rarity string) bool {
+	_, ok := rarityOrder[rarity]
+	return ok
 }
 
-func priceForRarity(rarity string) (int64, bool) {
-	for _, option := range eggRarities {
-		if option.rarity == rarity {
-			return option.price, true
-		}
+func (s *Store) ListEggProducts(ctx context.Context) ([]EggProduct, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT rarity, label, price_gold, image_url, description, is_active, updated_at
+		FROM shop_egg_catalog
+		ORDER BY CASE rarity WHEN 'common' THEN 1 WHEN 'rare' THEN 2 WHEN 'epic' THEN 3 WHEN 'legendary' THEN 4 WHEN 'mythic' THEN 5 ELSE 6 END
+	`)
+	if err != nil {
+		return nil, err
 	}
-	return 0, false
+	defer rows.Close()
+	items := make([]EggProduct, 0, 5)
+	for rows.Next() {
+		var item EggProduct
+		if err := rows.Scan(&item.Rarity, &item.Label, &item.PriceGold, &item.ImageURL, &item.Description, &item.IsActive, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) UpdateEggProduct(ctx context.Context, rarity string, input EggProductUpdateInput) (EggProduct, error) {
+	input.Label = strings.TrimSpace(input.Label)
+	input.ImageURL = strings.TrimSpace(input.ImageURL)
+	input.Description = strings.TrimSpace(input.Description)
+	if !validEggRarity(rarity) || input.Label == "" || utf8.RuneCountInString(input.Label) > 80 || input.PriceGold < 1 || input.PriceGold > 100_000_000 || utf8.RuneCountInString(input.Description) > 500 || !validEggImageURL(input.ImageURL) {
+		return EggProduct{}, ErrInvalidEggProduct
+	}
+	var item EggProduct
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE shop_egg_catalog SET label=$2, price_gold=$3, image_url=$4, description=$5, is_active=$6, updated_at=now()
+		WHERE rarity=$1 RETURNING rarity, label, price_gold, image_url, description, is_active, updated_at
+	`, rarity, input.Label, input.PriceGold, input.ImageURL, input.Description, input.IsActive).Scan(&item.Rarity, &item.Label, &item.PriceGold, &item.ImageURL, &item.Description, &item.IsActive, &item.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EggProduct{}, ErrInvalidRarity
+	}
+	return item, err
+}
+
+func validEggImageURL(value string) bool {
+	if value == "" {
+		return true
+	}
+	if strings.HasPrefix(value, "/uploads/") {
+		return !strings.Contains(value, "..") && len(value) <= 500
+	}
+	u, err := url.ParseRequestURI(value)
+	return err == nil && u.Scheme == "https" && u.Host != "" && len(value) <= 500
 }
 
 func (s *Store) Shop(ctx context.Context, telegramID int64) (ShopData, error) {
 	counts := map[string]int{}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT rarity, COUNT(*)::int
-		FROM creature_species
-		WHERE is_active = TRUE
-		GROUP BY rarity
-	`)
+	rows, err := s.db.QueryContext(ctx, `SELECT rarity, COUNT(*)::int FROM creature_species WHERE is_active=TRUE GROUP BY rarity`)
 	if err != nil {
 		return ShopData{}, err
 	}
@@ -70,20 +105,20 @@ func (s *Store) Shop(ctx context.Context, telegramID int64) (ShopData, error) {
 	}
 	rows.Close()
 
-	data := ShopData{EggOffers: make([]EggOffer, 0, len(eggRarities)), Eggs: make([]Egg, 0)}
-	for _, option := range eggRarities {
-		count := counts[option.rarity]
+	products, err := s.ListEggProducts(ctx)
+	if err != nil {
+		return ShopData{}, err
+	}
+	data := ShopData{EggOffers: make([]EggOffer, 0, len(products)), Eggs: make([]Egg, 0)}
+	for _, product := range products {
+		count := counts[product.Rarity]
 		data.EggOffers = append(data.EggOffers, EggOffer{
-			Rarity: option.rarity, Label: option.label, PriceGold: option.price,
-			Available: count > 0, AvailableSpecies: count,
+			Rarity: product.Rarity, Label: product.Label, PriceGold: product.PriceGold, ImageURL: product.ImageURL,
+			Description: product.Description, IsActive: product.IsActive, Available: product.IsActive && count > 0, AvailableSpecies: count,
 		})
 	}
 
-	eggRows, err := s.db.QueryContext(ctx, `
-		SELECT id, rarity, price_gold, purchased_at
-		FROM player_eggs WHERE owner_telegram_id = $1
-		ORDER BY purchased_at DESC, id DESC
-	`, telegramID)
+	eggRows, err := s.db.QueryContext(ctx, `SELECT id, rarity, price_gold, purchased_at FROM player_eggs WHERE owner_telegram_id=$1 ORDER BY purchased_at DESC, id DESC`, telegramID)
 	if err != nil {
 		return ShopData{}, err
 	}
@@ -102,11 +137,9 @@ func (s *Store) Shop(ctx context.Context, telegramID int64) (ShopData, error) {
 }
 
 func (s *Store) BuyEgg(ctx context.Context, telegramID int64, rarity string) (BuyEggResult, error) {
-	price, ok := priceForRarity(rarity)
-	if !ok {
+	if !validEggRarity(rarity) {
 		return BuyEggResult{}, ErrInvalidRarity
 	}
-
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return BuyEggResult{}, err
@@ -120,11 +153,19 @@ func (s *Store) BuyEgg(ctx context.Context, telegramID int64, rarity string) (Bu
 		}
 		return BuyEggResult{}, err
 	}
+	var price int64
+	var eggActive bool
+	if err := tx.QueryRowContext(ctx, `SELECT price_gold, is_active FROM shop_egg_catalog WHERE rarity=$1 FOR UPDATE`, rarity).Scan(&price, &eggActive); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return BuyEggResult{}, ErrInvalidRarity
+		}
+		return BuyEggResult{}, err
+	}
 	var available bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM creature_species WHERE rarity=$1 AND is_active=TRUE)`, rarity).Scan(&available); err != nil {
 		return BuyEggResult{}, err
 	}
-	if !available {
+	if !eggActive || !available {
 		return BuyEggResult{}, ErrSpeciesUnavailable
 	}
 	if balance < price {

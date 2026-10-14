@@ -12,4 +12,5 @@ type Repository interface {
 	CreateSpecies(context.Context, SpeciesInput) (Species, error)
 	UpdateSpecies(context.Context, int64, SpeciesUpdateInput) (Species, error)
 	ArchiveSpecies(context.Context, int64) error
+	DeleteSpecies(context.Context, int64) error
 }

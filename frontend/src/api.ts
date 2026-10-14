@@ -22,8 +22,43 @@ export type EggOffer = {
   rarity: Rarity;
   label: string;
   price_gold: number;
+  image_url: string;
+  description: string;
+  is_active: boolean;
   available: boolean;
   available_species: number;
+};
+
+export type EggProduct = {
+  rarity: Rarity;
+  label: string;
+  price_gold: number;
+  image_url: string;
+  description: string;
+  is_active: boolean;
+  updated_at: string;
+};
+
+export type EggProductUpdateInput = Omit<EggProduct, 'rarity' | 'updated_at'>;
+
+export type SubscriptionStatus = {
+  enabled: boolean;
+  url: string;
+  title: string;
+  message: string;
+  reward_gold: number;
+  reward_creature_slug?: string;
+  reward_creature_name?: string;
+  claimed: boolean;
+};
+
+export type SubscriptionClaimResult = {
+  claimed: boolean;
+  already_claimed: boolean;
+  gold_added: number;
+  gold_balance: number;
+  creature_slug?: string;
+  creature_name?: string;
 };
 
 export type OwnedEgg = {
@@ -91,6 +126,7 @@ export type Species = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  is_featured: boolean;
 };
 
 export type SpeciesInput = {
@@ -105,6 +141,7 @@ export type SpeciesInput = {
   damage: number;
   crit_chance: number;
   ability_id: number;
+  is_featured: boolean;
 };
 
 export type SpeciesUpdateInput = Omit<SpeciesInput, 'slug'>;
@@ -244,6 +281,13 @@ let demoSpeciesID = 4;
 let demoEggID = 1;
 let demoEggs: OwnedEgg[] = [];
 let demoDiscoveredSlugs = new Set<string>(['ino-sprout']);
+let demoEggCatalog: EggProduct[] = [
+  { rarity: 'common', label: 'Обычное яйцо', price_gold: 250, image_url: '', description: 'Простое яйцо с обычным иномеконом.', is_active: true, updated_at: new Date().toISOString() },
+  { rarity: 'rare', label: 'Редкое яйцо', price_gold: 1000, image_url: '', description: 'Шанс получить редкого иномекона.', is_active: true, updated_at: new Date().toISOString() },
+  { rarity: 'epic', label: 'Эпическое яйцо', price_gold: 2500, image_url: '', description: 'Эпическая находка.', is_active: true, updated_at: new Date().toISOString() },
+  { rarity: 'legendary', label: 'Легендарное яйцо', price_gold: 7500, image_url: '', description: 'Редкая возможность найти легендарный вид.', is_active: true, updated_at: new Date().toISOString() },
+  { rarity: 'mythic', label: 'Мифическое яйцо', price_gold: 15000, image_url: '', description: 'Яйцо с мифическим иномеконом.', is_active: true, updated_at: new Date().toISOString() },
+];
 
 let demoSpecies: Species[] = [
   {
@@ -262,6 +306,7 @@ let demoSpecies: Species[] = [
     ability_name: 'Искра',
     ability_slug: 'spark',
     is_active: true,
+    is_featured: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -281,6 +326,7 @@ let demoSpecies: Species[] = [
     ability_name: 'Искра',
     ability_slug: 'spark',
     is_active: true,
+    is_featured: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -300,6 +346,7 @@ let demoSpecies: Species[] = [
     ability_name: 'Искра',
     ability_slug: 'spark',
     is_active: true,
+    is_featured: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -373,6 +420,11 @@ export const api = {
     request<SlotSpinResult>('/api/v1/game/slot', initData, { method: 'POST', body: payload }),
   creatures: (initData: string) => request<{ items: Creature[] }>('/api/v1/me/creatures', initData),
   shop: (initData: string) => request<ShopData>('/api/v1/shop', initData),
+  listAdminEggProducts: (initData: string) => request<{ items: EggProduct[] }>('/api/v1/admin/shop/eggs', initData),
+  updateAdminEggProduct: (initData: string, rarity: Rarity, payload: EggProductUpdateInput) =>
+    request<EggProduct>(`/api/v1/admin/shop/eggs/${rarity}`, initData, { method: 'PUT', body: payload }),
+  subscriptionStatus: (initData: string) => request<SubscriptionStatus>('/api/v1/subscription', initData),
+  claimSubscription: (initData: string) => request<SubscriptionClaimResult>('/api/v1/subscription/claim', initData, { method: 'POST', body: {} }),
   buyEgg: (initData: string, rarity: Rarity) =>
     request<BuyEggResult>('/api/v1/shop/eggs/buy', initData, { method: 'POST', body: { rarity } }),
   hatchEgg: (initData: string, id: number) =>
@@ -420,8 +472,8 @@ export const api = {
   updateSpecies: (initData: string, id: number, payload: SpeciesUpdateInput) =>
     request<Species>(`/api/v1/admin/creatures/${id}`, initData, { method: 'PUT', body: payload }),
 
-  archiveSpecies: (initData: string, id: number) =>
-    request<{ ok: boolean; id: number }>(`/api/v1/admin/creatures/${id}`, initData, { method: 'DELETE' }),
+  deleteSpecies: (initData: string, id: number) =>
+    request<{ ok: boolean; id: number; deleted: boolean }>(`/api/v1/admin/creatures/${id}`, initData, { method: 'DELETE' }),
 
   uploadImage: async (
     initData: string,
@@ -485,29 +537,40 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   }
 
   if (path === '/api/v1/shop' && options.method !== 'POST') {
-    const prices: { rarity: Rarity; label: string; price_gold: number }[] = [
-      { rarity: 'common', label: 'Обычное', price_gold: 250 },
-      { rarity: 'rare', label: 'Редкое', price_gold: 1000 },
-      { rarity: 'epic', label: 'Эпическое', price_gold: 2500 },
-      { rarity: 'legendary', label: 'Легендарное', price_gold: 7500 },
-      { rarity: 'mythic', label: 'Мифическое', price_gold: 15000 },
-    ];
     return {
-      egg_offers: prices.map((item) => {
+      egg_offers: demoEggCatalog.map((item) => {
         const count = demoSpecies.filter((species) => species.is_active && species.rarity === item.rarity).length;
-        return { ...item, available: count > 0, available_species: count };
+        return { ...item, available: item.is_active && count > 0, available_species: count };
       }),
       eggs: demoEggs,
     } as T;
   }
 
+  if (path === '/api/v1/admin/shop/eggs' && options.method !== 'PUT') {
+    return { items: demoEggCatalog } as T;
+  }
+  const adminEggMatch = path.match(/^\/api\/v1\/admin\/shop\/eggs\/(common|rare|epic|legendary|mythic)$/);
+  if (adminEggMatch && options.method === 'PUT') {
+    const rarity = adminEggMatch[1] as Rarity;
+    const payload = options.body as EggProductUpdateInput;
+    const updated: EggProduct = { rarity, ...payload, updated_at: new Date().toISOString() };
+    demoEggCatalog = demoEggCatalog.map((item) => item.rarity === rarity ? updated : item);
+    return updated as T;
+  }
+
+  if (path === '/api/v1/subscription') {
+    return { enabled: false, url: '', title: '', message: '', reward_gold: 0, claimed: false } as T;
+  }
+  if (path === '/api/v1/subscription/claim' && options.method === 'POST') {
+    throw new APIError('Бонус за подписку доступен только в Telegram-версии на сервере.', 503, 'subscription_disabled');
+  }
+
   if (path === '/api/v1/shop/eggs/buy' && options.method === 'POST') {
     const payload = options.body as { rarity: Rarity };
-    const priceByRarity: Record<Rarity, number> = { common: 250, rare: 1000, epic: 2500, legendary: 7500, mythic: 15000 };
+    const product = demoEggCatalog.find((item) => item.rarity === payload.rarity);
     const offer = demoSpecies.some((species) => species.is_active && species.rarity === payload.rarity);
-    if (!offer) throw new APIError('В этой редкости пока нет активных иномеконов. Сначала добавь такой вид в каталог.', 409, 'egg_unavailable');
-    const price = priceByRarity[payload.rarity];
-    if (!price) throw new APIError('Неизвестная редкость яйца.', 400);
+    if (!product || !product.is_active || !offer) throw new APIError('Это яйцо сейчас недоступно.', 409, 'egg_unavailable');
+    const price = product.price_gold;
     if (demoGold < price) throw new APIError('Не хватает золота для покупки этого яйца.', 409, 'insufficient_gold');
     demoGold -= price;
     const egg: OwnedEgg = { id: demoEggID++, rarity: payload.rarity, price_gold: price, purchased_at: new Date().toISOString() };
@@ -790,6 +853,20 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     }
   }
 
+  const deleteSpeciesMatch = path.match(/^\/api\/v1\/admin\/creatures\/(\d+)$/);
+  if (deleteSpeciesMatch && options.method === 'DELETE') {
+    const id = Number(deleteSpeciesMatch[1]);
+    const species = demoSpecies.find((item) => item.id === id);
+    if (!species) throw new APIError('Иномекон не найден.', 404);
+    demoCreatures = demoCreatures.filter((item) => item.species_slug !== species.slug);
+    demoDiscoveredSlugs.delete(species.slug);
+    demoBatches = demoBatches.map((batch) => batch.reward_creature_slug === species.slug && !batch.revoked_at
+      ? { ...batch, revoked_at: new Date().toISOString() }
+      : batch);
+    demoSpecies = demoSpecies.filter((item) => item.id !== id);
+    return { ok: true, id, deleted: true } as T;
+  }
+
   if (path === '/api/v1/admin/creatures' || path === '/api/v1/catalog/creatures') {
     if (path === '/api/v1/catalog/creatures') {
       const ownedSlugs = new Set([...demoCreatures.map((creature) => creature.species_slug), ...demoDiscoveredSlugs]);
@@ -805,6 +882,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       }
 
       const now = new Date().toISOString();
+      if (input.is_featured) demoSpecies = demoSpecies.map((species) => ({ ...species, is_featured: false }));
       const ability = demoAbilities.find((item) => item.id === input.ability_id) ?? demoAbilities[0];
       const created: Species = {
         ...input,
@@ -835,6 +913,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       const input = options.body as SpeciesUpdateInput;
 
       const ability = demoAbilities.find((entry) => entry.id === input.ability_id) ?? demoAbilities[0];
+      if (input.is_featured) demoSpecies = demoSpecies.map((species) => species.id === id ? species : { ...species, is_featured: false });
       const updated: Species = {
         ...item,
         ...input,

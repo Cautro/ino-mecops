@@ -197,6 +197,25 @@ func (h *Handler) ArchiveSpecies(w http.ResponseWriter, r *http.Request) {
 	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
+func (h *Handler) DeleteSpecies(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	id, ok := parseID(w, r.PathValue("id"), "Некорректный ID иномекона.")
+	if !ok {
+		return
+	}
+	if err := h.useCase.DeleteSpecies(r.Context(), id); err != nil {
+		if errors.Is(err, ErrInUse) {
+			services.WriteError(w, http.StatusConflict, "in_use", "Не удалось удалить вид из-за связанных записей. Проверь связанные данные и ограничения базы.")
+			return
+		}
+		h.writeCatalogError(w, err, "Не удалось окончательно удалить иномекона.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "deleted": true})
+}
+
 func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAdmin(w, r) {
 		return

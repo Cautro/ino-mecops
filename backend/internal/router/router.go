@@ -13,19 +13,21 @@ import (
 	"github.com/cautro/inomecops/backend/internal/features/codes"
 	"github.com/cautro/inomecops/backend/internal/features/gameplay"
 	"github.com/cautro/inomecops/backend/internal/features/shop"
+	"github.com/cautro/inomecops/backend/internal/features/subscription"
 	"github.com/cautro/inomecops/backend/internal/services"
 )
 
 type Dependencies struct {
-	Auth      *auth.Handler
-	Codes     *codes.Handler
-	Admin     *admin_panel.Handler
-	Catalog   *catalog.Handler
-	Gameplay  *gameplay.Handler
-	Shop      *shop.Handler
-	UploadDir string
-	DB        *sql.DB
-	Log       *log.Logger
+	Auth         *auth.Handler
+	Codes        *codes.Handler
+	Admin        *admin_panel.Handler
+	Catalog      *catalog.Handler
+	Gameplay     *gameplay.Handler
+	Shop         *shop.Handler
+	Subscription *subscription.Handler
+	UploadDir    string
+	DB           *sql.DB
+	Log          *log.Logger
 }
 
 func New(deps Dependencies) http.Handler {
@@ -53,6 +55,10 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("POST /api/v1/shop/eggs/buy", protected(http.HandlerFunc(deps.Shop.BuyEgg)))
 	mux.Handle("POST /api/v1/shop/eggs/{id}/hatch", protected(http.HandlerFunc(deps.Shop.HatchEgg)))
 	mux.Handle("POST /api/v1/shop/creatures/{id}/sell", protected(http.HandlerFunc(deps.Shop.SellCreature)))
+	mux.Handle("GET /api/v1/admin/shop/eggs", protected(http.HandlerFunc(deps.Shop.ListAdminEggs)))
+	mux.Handle("PUT /api/v1/admin/shop/eggs/{rarity}", protected(http.HandlerFunc(deps.Shop.UpdateAdminEgg)))
+	mux.Handle("GET /api/v1/subscription", protected(http.HandlerFunc(deps.Subscription.Status)))
+	mux.Handle("POST /api/v1/subscription/claim", protected(http.HandlerFunc(deps.Subscription.Claim)))
 	mux.Handle("GET /api/v1/me/creatures", protected(http.HandlerFunc(deps.Codes.ListCreatures)))
 	mux.Handle("POST /api/v1/codes/redeem", protected(http.HandlerFunc(deps.Codes.Redeem)))
 	mux.Handle("GET /api/v1/admin/code-batches", protected(http.HandlerFunc(deps.Admin.ListBatches)))
@@ -69,7 +75,7 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/admin/creatures", protected(http.HandlerFunc(deps.Catalog.ListAdminSpecies)))
 	mux.Handle("POST /api/v1/admin/creatures", protected(http.HandlerFunc(deps.Catalog.CreateSpecies)))
 	mux.Handle("PUT /api/v1/admin/creatures/{id}", protected(http.HandlerFunc(deps.Catalog.UpdateSpecies)))
-	mux.Handle("DELETE /api/v1/admin/creatures/{id}", protected(http.HandlerFunc(deps.Catalog.ArchiveSpecies)))
+	mux.Handle("DELETE /api/v1/admin/creatures/{id}", protected(http.HandlerFunc(deps.Catalog.DeleteSpecies)))
 	mux.Handle("POST /api/v1/admin/uploads/images", protected(http.HandlerFunc(deps.Catalog.UploadImage)))
 	mux.Handle("GET /api/v1/catalog/creatures", protected(http.HandlerFunc(deps.Catalog.ListPublicSpecies)))
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(deps.UploadDir))))

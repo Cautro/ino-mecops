@@ -89,6 +89,12 @@ func (u *UseCase) ArchiveSpecies(ctx context.Context, id int64) error {
 	}
 	return u.repo.ArchiveSpecies(ctx, id)
 }
+func (u *UseCase) DeleteSpecies(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrNotFound
+	}
+	return u.repo.DeleteSpecies(ctx, id)
+}
 
 func validateAbilityInput(slug, name, description, element string, power int, accuracy float64, cooldown int, effect string, effectValue, effectDuration int) error {
 	if !slugPattern.MatchString(slug) || len(slug) > 48 || !validName(name, 80) || !validText(description, 500) || !abilityElements[element] || power < 0 || power > 100_000 || accuracy < 0 || accuracy > 100 || cooldown < 0 || cooldown > 3600 || !effectTypes[effect] || effectValue < 0 || effectValue > 100 || effectDuration < 0 || effectDuration > 600 {

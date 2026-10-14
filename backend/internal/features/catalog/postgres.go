@@ -88,7 +88,7 @@ func (r *PostgresRepository) DeleteAbility(ctx context.Context, id int64) error 
 
 const speciesSelect = `
 SELECT s.id, s.slug, s.name, s.description, s.image_url, s.sell_price_gold, s.rarity, s.passive_gold_per_hour,
-       s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at
+       s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at, s.is_featured
 FROM creature_species s
 JOIN abilities a ON a.id=s.ability_id
 `
@@ -96,7 +96,7 @@ JOIN abilities a ON a.id=s.ability_id
 func scanSpecies(scanner interface{ Scan(...any) error }) (Species, error) {
 	var item Species
 	err := scanner.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.SellPriceGold, &item.Rarity, &item.PassiveGoldPerHour,
-		&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
+		&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &item.IsFeatured)
 	return item, err
 }
 
@@ -159,28 +159,54 @@ func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTel
 }
 
 func (r *PostgresRepository) CreateSpecies(ctx context.Context, input SpeciesInput) (Species, error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return Species{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if input.IsFeatured {
+		if _, err := tx.ExecContext(ctx, `UPDATE creature_species SET is_featured=FALSE, updated_at=now() WHERE is_featured=TRUE`); err != nil {
+			return Species{}, err
+		}
+	}
 	var id int64
-	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO creature_species (slug, name, description, image_url, sell_price_gold, rarity, passive_gold_per_hour, health, damage, crit_chance, ability_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-		input.Slug, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID).Scan(&id)
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO creature_species (slug, name, description, image_url, sell_price_gold, rarity, passive_gold_per_hour, health, damage, crit_chance, ability_id, is_featured)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+		input.Slug, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, input.IsFeatured).Scan(&id)
 	if err != nil {
 		return Species{}, mapDatabaseError(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Species{}, err
 	}
 	return r.getSpecies(ctx, id)
 }
 
 func (r *PostgresRepository) UpdateSpecies(ctx context.Context, id int64, input SpeciesUpdateInput) (Species, error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return Species{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if input.IsFeatured {
+		if _, err := tx.ExecContext(ctx, `UPDATE creature_species SET is_featured=FALSE, updated_at=now() WHERE is_featured=TRUE AND id<>$1`, id); err != nil {
+			return Species{}, err
+		}
+	}
 	var updatedID int64
-	err := r.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		UPDATE creature_species SET name=$2, description=$3, image_url=$4, sell_price_gold=$5, rarity=$6, passive_gold_per_hour=$7,
-			health=$8, damage=$9, crit_chance=$10, ability_id=$11, updated_at=now()
-		WHERE id=$1 RETURNING id`, id, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID).Scan(&updatedID)
+			health=$8, damage=$9, crit_chance=$10, ability_id=$11, is_featured=$12, updated_at=now()
+		WHERE id=$1 RETURNING id`, id, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, input.IsFeatured).Scan(&updatedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Species{}, ErrNotFound
 	}
 	if err != nil {
 		return Species{}, mapDatabaseError(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Species{}, err
 	}
 	return r.getSpecies(ctx, updatedID)
 }
@@ -204,6 +230,57 @@ func (r *PostgresRepository) ArchiveSpecies(ctx context.Context, id int64) error
 	}
 	if count == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) DeleteSpecies(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var slug string
+	if err := tx.QueryRowContext(ctx, `SELECT slug FROM creature_species WHERE id=$1 FOR UPDATE`, id).Scan(&slug); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+
+	// A permanent delete removes owned copies and discovery records. Any active
+	// promo-code batch promising this species is revoked first so it cannot issue
+	// a reward for a creature which no longer exists.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE code_batches SET revoked_at=COALESCE(revoked_at, now())
+		WHERE reward_creature_slug=$1 AND revoked_at IS NULL
+		  AND EXISTS (
+		    SELECT 1 FROM promo_codes c
+		    WHERE c.batch_id=code_batches.id AND c.redeemed_by IS NULL AND c.revoked_at IS NULL
+		  )
+	`, slug); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM player_creatures WHERE species_slug=$1`, slug); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM player_discovered_species WHERE species_slug=$1`, slug); err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM creature_species WHERE id=$1`, id)
+	if err != nil {
+		return mapDatabaseError(err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return mapDatabaseError(err)
 	}
 	return nil
 }

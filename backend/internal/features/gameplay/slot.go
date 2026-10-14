@@ -33,8 +33,9 @@ type slotOutcome struct {
 }
 
 type creatureOption struct {
-	slug string
-	name string
+	slug     string
+	name     string
+	featured bool
 }
 
 func rollSlotSymbols() ([3]string, error) {
@@ -329,7 +330,7 @@ func (s *Store) spinCreature(ctx context.Context, telegramID, creatureID int64) 
 }
 
 func activeCreatureOptions(ctx context.Context, tx *sql.Tx) ([]creatureOption, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT slug, name FROM creature_species WHERE is_active=true ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT slug, name, is_featured FROM creature_species WHERE is_active=true ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +339,7 @@ func activeCreatureOptions(ctx context.Context, tx *sql.Tx) ([]creatureOption, e
 	available := make([]creatureOption, 0)
 	for rows.Next() {
 		var creature creatureOption
-		if err := rows.Scan(&creature.slug, &creature.name); err != nil {
+		if err := rows.Scan(&creature.slug, &creature.name, &creature.featured); err != nil {
 			return nil, err
 		}
 		available = append(available, creature)
@@ -353,11 +354,32 @@ func randomCreature(available []creatureOption) (creatureOption, error) {
 	if len(available) == 0 {
 		return creatureOption{}, errors.New("no available creatures")
 	}
-	pick, err := crand.Int(crand.Reader, big.NewInt(int64(len(available))))
+	// The one featured species receives 5 tickets; all other species receive 1.
+	// This chooser is used only for slot rewards, not for egg hatching.
+	totalWeight := int64(0)
+	for _, option := range available {
+		totalWeight += creatureSelectionWeight(option)
+	}
+	pick, err := crand.Int(crand.Reader, big.NewInt(totalWeight))
 	if err != nil {
 		return creatureOption{}, err
 	}
-	return available[pick.Int64()], nil
+	remaining := pick.Int64()
+	for _, option := range available {
+		weight := creatureSelectionWeight(option)
+		if remaining < weight {
+			return option, nil
+		}
+		remaining -= weight
+	}
+	return available[len(available)-1], nil
+}
+
+func creatureSelectionWeight(option creatureOption) int64 {
+	if option.featured {
+		return 5
+	}
+	return 1
 }
 
 func nullIfEmpty(value string) any {

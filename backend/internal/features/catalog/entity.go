@@ -62,6 +62,7 @@ type Species struct {
 	IsActive           bool      `json:"is_active"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+	IsFeatured         bool      `json:"is_featured"`
 }
 
 // CollectionSpecies is the player-facing collection entry. For undiscovered
@@ -118,6 +119,7 @@ type SpeciesInput struct {
 	Damage             int     `json:"damage"`
 	CritChance         float64 `json:"crit_chance"`
 	AbilityID          int64   `json:"ability_id"`
+	IsFeatured         bool    `json:"is_featured"`
 }
 
 type SpeciesUpdateInput struct {
@@ -131,4 +133,5 @@ type SpeciesUpdateInput struct {
 	Damage             int     `json:"damage"`
 	CritChance         float64 `json:"crit_chance"`
 	AbilityID          int64   `json:"ability_id"`
+	IsFeatured         bool    `json:"is_featured"`
 }

@@ -11,21 +11,32 @@ import (
 )
 
 type Config struct {
-	BotToken    string
-	DatabaseURL string
-	WebAppURL   string
-	UploadDir   string
-	Port        string
-	AdminIDs    map[int64]struct{}
+	BotToken                       string
+	DatabaseURL                    string
+	WebAppURL                      string
+	UploadDir                      string
+	Port                           string
+	AdminIDs                       map[int64]struct{}
+	SubscriptionURL                string
+	SubscriptionChatID             string
+	SubscriptionTitle              string
+	SubscriptionMessage            string
+	SubscriptionRewardGold         int64
+	SubscriptionRewardCreatureSlug string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		BotToken:    strings.TrimSpace(os.Getenv("BOT_TOKEN")),
-		DatabaseURL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		WebAppURL:   strings.TrimSpace(os.Getenv("WEBAPP_URL")),
-		UploadDir:   strings.TrimSpace(os.Getenv("UPLOAD_DIR")),
-		Port:        strings.TrimSpace(os.Getenv("PORT")),
+		BotToken:                       strings.TrimSpace(os.Getenv("BOT_TOKEN")),
+		DatabaseURL:                    strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		WebAppURL:                      strings.TrimSpace(os.Getenv("WEBAPP_URL")),
+		UploadDir:                      strings.TrimSpace(os.Getenv("UPLOAD_DIR")),
+		Port:                           strings.TrimSpace(os.Getenv("PORT")),
+		SubscriptionURL:                strings.TrimSpace(os.Getenv("SUBSCRIPTION_URL")),
+		SubscriptionChatID:             strings.TrimSpace(os.Getenv("SUBSCRIPTION_CHAT_ID")),
+		SubscriptionTitle:              strings.TrimSpace(os.Getenv("SUBSCRIPTION_TITLE")),
+		SubscriptionMessage:            strings.TrimSpace(os.Getenv("SUBSCRIPTION_MESSAGE")),
+		SubscriptionRewardCreatureSlug: strings.TrimSpace(os.Getenv("SUBSCRIPTION_REWARD_CREATURE_SLUG")),
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"
@@ -42,6 +53,20 @@ func Load() (Config, error) {
 			cfg.UploadDir = absolute
 		}
 	}
+	if raw := strings.TrimSpace(os.Getenv("SUBSCRIPTION_REWARD_GOLD")); raw != "" {
+		reward, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || reward < 0 || reward > 100_000_000 {
+			return Config{}, errors.New("SUBSCRIPTION_REWARD_GOLD must be between 0 and 100000000")
+		}
+		cfg.SubscriptionRewardGold = reward
+	}
+	if cfg.SubscriptionURL != "" {
+		u, err := url.ParseRequestURI(cfg.SubscriptionURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return Config{}, errors.New("SUBSCRIPTION_URL must be a public HTTPS URL")
+		}
+	}
+
 	if _, err := strconv.Atoi(cfg.Port); err != nil {
 		return Config{}, fmt.Errorf("PORT must be a number: %w", err)
 	}
