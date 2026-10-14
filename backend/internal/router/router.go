@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cautro/inomecops/backend/internal/features/admin_panel"
@@ -54,6 +55,10 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/me", protected(http.HandlerFunc(deps.Auth.Me)))
 	mux.Handle("GET /api/v1/game/overview", protected(http.HandlerFunc(deps.Gameplay.Overview)))
 	mux.Handle("POST /api/v1/game/slot", protected(http.HandlerFunc(deps.Gameplay.SpinSlot)))
+	mux.Handle("GET /api/v1/game/main-creature", protected(http.HandlerFunc(deps.Gameplay.MainSlot)))
+	mux.Handle("PUT /api/v1/game/main-creature", protected(http.HandlerFunc(deps.Gameplay.SetMainSlot)))
+	mux.Handle("DELETE /api/v1/game/main-creature", protected(http.HandlerFunc(deps.Gameplay.ClearMainSlot)))
+	mux.Handle("GET /api/v1/leaderboards", protected(http.HandlerFunc(deps.Gameplay.Leaderboards)))
 	mux.Handle("GET /api/v1/shop", protected(http.HandlerFunc(deps.Shop.Overview)))
 	mux.Handle("POST /api/v1/shop/eggs/buy", protected(http.HandlerFunc(deps.Shop.BuyEgg)))
 	mux.Handle("POST /api/v1/shop/eggs/{id}/hatch", protected(http.HandlerFunc(deps.Shop.HatchEgg)))
@@ -86,13 +91,53 @@ func New(deps Dependencies) http.Handler {
 	return metricsRegistry.Middleware(requestLogger(mux, deps.Log))
 }
 
+type loggedResponseWriter struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (w *loggedResponseWriter) WriteHeader(status int) {
+	if w.wrote {
+		return
+	}
+	w.status = status
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggedResponseWriter) Write(body []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *loggedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func requestLogger(next http.Handler, logger *log.Logger) http.Handler {
 	if logger == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		logger.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		recorder := &loggedResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		duration := time.Since(start).Round(time.Millisecond)
+		route := r.Pattern
+		if route == "" {
+			route = r.URL.Path
+		} else if space := strings.IndexByte(route, ' '); space >= 0 {
+			route = route[space+1:]
+		}
+		if status >= 400 {
+			logger.Printf("HTTP ERROR method=%s route=%q status=%d duration=%s remote=%q", r.Method, route, status, duration, r.RemoteAddr)
+		} else {
+			logger.Printf("%s %s status=%d duration=%s", r.Method, route, status, duration)
+		}
 	})
 }

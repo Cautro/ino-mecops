@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api } from './api';
-import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggKind, EggProduct, EggProductUpdateInput, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
+import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggKind, EggProduct, EggProductUpdateInput, MainBonusType, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
 
 type AdminPanelProps = {
   initData: string;
@@ -19,7 +19,7 @@ const RARITY_OPTIONS: { value: Rarity; label: string }[] = [
 
 const blankSpecies = (abilityID = 1): SpeciesInput => ({
   slug: '', name: '', description: '', image_url: '', sell_price_gold: 0, rarity: 'common', passive_gold_per_hour: 5,
-  health: 100, damage: 10, crit_chance: 5, ability_id: abilityID, is_featured: false,
+  health: 100, damage: 10, crit_chance: 5, ability_id: abilityID, is_featured: false, main_bonus_type: 'none', main_bonus_multiplier: 1,
 });
 const blankBatch = (): CreateBatchInput => ({
   label: '', count: 20, reward_name: '', reward_rarity: 'Обычная', reward_gold: 50,
@@ -85,7 +85,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     setSpeciesForm({
       slug: item.slug, name: item.name, description: item.description, image_url: item.image_url, sell_price_gold: item.sell_price_gold,
       rarity: item.rarity, passive_gold_per_hour: item.passive_gold_per_hour, health: item.health,
-      damage: item.damage, crit_chance: item.crit_chance, ability_id: item.ability_id, is_featured: item.is_featured,
+      damage: item.damage, crit_chance: item.crit_chance, ability_id: item.ability_id, is_featured: false, main_bonus_type: item.main_bonus_type ?? 'none', main_bonus_multiplier: item.main_bonus_multiplier ?? 1,
     });
     setSpeciesFormOpen(true); setError(''); setSuccess('');
   };
@@ -215,14 +215,15 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
       {success && <div className="admin-message admin-message--success" role="status">{success}</div>}
       {loading ? <div className="surface admin-empty">Загружаем данные панели…</div> : <>
         {section === 'species' && <>
-          <div className="admin-section-heading"><div><h2>Каталог иномеконов</h2><p>Настраивай виды, цену продажи и единственного основного иномекона. Основной получает повышенный шанс только в наградах барабана.</p></div><button className="button button--primary" onClick={resetSpeciesForm}>+ Добавить иномекона</button></div>
+          <div className="admin-section-heading"><div><h2>Каталог иномеконов</h2><p>Настраивай параметры индивидуального бонуса. Каждый игрок сам выбирает одного из своих иномеконов в основной слот.</p></div><button className="button button--primary" onClick={resetSpeciesForm}>+ Добавить иномекона</button></div>
           {speciesFormOpen && <form className="surface admin-form" onSubmit={saveSpecies}>
             <div className="admin-form-heading"><h3>{editingSpeciesID === null ? 'Новый иномекон' : `Редактирование: ${speciesForm.name}`}</h3><button type="button" className="icon-button" onClick={() => setSpeciesFormOpen(false)} aria-label="Закрыть">×</button></div>
             <div className="admin-form-grid">
               {field('Системный ID (slug)', speciesForm.slug, (v) => setSpeciesForm((s) => ({ ...s, slug: v.toLowerCase().replace(/[^a-z0-9-]/g, '') })), { required: editingSpeciesID === null, disabled: editingSpeciesID !== null, placeholder: 'ino-sprout' })}
               {field('Название', speciesForm.name, (v) => setSpeciesForm((s) => ({ ...s, name: v })), { required: true })}
               <label className="field"><span className="field-label">Редкость иномекона</span><select value={speciesForm.rarity} onChange={(e) => setSpeciesForm((s) => ({ ...s, rarity: e.target.value as Rarity }))}>{RARITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-              <label className="field admin-checkbox-field"><input type="checkbox" checked={speciesForm.is_featured} onChange={(e) => setSpeciesForm((s) => ({ ...s, is_featured: e.target.checked }))} /><span><strong>Основной иномекон</strong><small>Получает 5× вес при выборе награды на барабане. Основной может быть только один.</small></span></label>
+              <label className="field"><span className="field-label">Бонус в основном слоте</span><select value={speciesForm.main_bonus_type} onChange={(e) => setSpeciesForm((s) => ({ ...s, main_bonus_type: e.target.value as MainBonusType }))}><option value="none">Без бонуса</option><option value="slot_chance">Повышенный шанс барабана</option><option value="slot_payout">Увеличенная выплата барабана</option><option value="passive_income">Увеличенный пассивный доход</option></select></label>
+              <label className="field"><span className="field-label">Множитель бонуса (×)</span><input type="number" min={1} max={10} step={1} required value={speciesForm.main_bonus_multiplier} onChange={(e) => setSpeciesForm((s) => ({ ...s, main_bonus_multiplier: Number(e.target.value) }))} /><small>Целое число от 1 до 10. Для шанса барабана ×5 означает 5 попыток, из которых выбирается лучший серверный результат.</small></label>
               {field('Пассивный доход (золота/час)', speciesForm.passive_gold_per_hour, (v) => setSpeciesForm((s) => ({ ...s, passive_gold_per_hour: Number(v) })), { type: 'number', min: 0, max: 10000000, required: true })}
               {field('Цена продажи (золота)', speciesForm.sell_price_gold, (v) => setSpeciesForm((s) => ({ ...s, sell_price_gold: Number(v) })), { type: 'number', min: 0, max: 1000000000, required: true })}
               <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={speciesForm.description} onChange={(e) => setSpeciesForm((s) => ({ ...s, description: e.target.value }))} rows={3} maxLength={1000} /></label>
@@ -233,7 +234,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
           <div className="admin-list">
             {species.map((item) => <article className={`surface admin-item ${!item.is_active ? 'admin-item--archived' : ''}`} key={item.id}>
               {item.image_url ? <img src={item.image_url} alt="" className="admin-item-image" /> : <div className="admin-item-image admin-item-image--empty">◇</div>}
-              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}{item.is_featured ? ' ★' : ''}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small>{item.description && <p>{item.description}</p>}</div>
+              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small><small>Бонус основного слота: {item.main_bonus_type === 'slot_chance' ? `шанс ×${item.main_bonus_multiplier}` : item.main_bonus_type === 'slot_payout' ? `выплата ×${item.main_bonus_multiplier}` : item.main_bonus_type === 'passive_income' ? `пассивный доход ×${item.main_bonus_multiplier}` : 'нет'}</small>{item.description && <p>{item.description}</p>}</div>
               <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => editSpecies(item)}>Изменить</button><button className="button button--danger button--small" onClick={() => void deleteSpecies(item)} disabled={busy}>Удалить навсегда</button></div>
             </article>)}
             {!species.length && <div className="surface admin-empty">Каталог пока пуст.</div>}

@@ -3935,3 +3935,77 @@ button.species-card--catalog:focus-visible {
 .egg-card--mystery .egg-card-art { border-color: #8062b0; background: radial-gradient(circle at 50% 25%, #39285b, #090e16 74%); }
 .tutorial-direct-shop { display: block; margin: 8px auto 0; padding: 8px 10px; border: 1px solid rgba(105,183,255,.3); border-radius: 10px; background: rgba(105,183,255,.07); color: #a9d8ff; font-size: 11px; font-weight: 750; }
 .tutorial-direct-shop:hover { background: rgba(105,183,255,.14); }
+
+/* ==================== Player main-creature slot + leaderboards ==================== */
+.main-slot-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(250px, .85fr);
+  gap: 22px;
+  margin: 0 0 22px;
+  padding: 22px;
+  border-color: rgba(105, 183, 255, .24);
+  background: radial-gradient(600px 220px at 0% 0%, rgba(105,183,255,.08), transparent 70%), linear-gradient(150deg, #121d2c, #0b111a 76%);
+}
+.main-slot-copy { min-width: 0; }
+.main-slot-copy h2 { margin: 4px 0 8px; color: var(--ink); font-size: clamp(20px, 3vw, 26px); letter-spacing: -.03em; }
+.main-slot-copy > p:not(.eyebrow) { max-width: 610px; margin: 0; color: var(--muted-strong); font-size: 12px; line-height: 1.7; }
+.main-slot-active { display: flex; align-items: center; gap: 13px; margin-top: 17px; padding: 12px; border: 1px solid rgba(105,183,255,.26); border-radius: 14px; background: rgba(105,183,255,.06); }
+.main-slot-active > .species-image { flex: 0 0 68px; width: 68px; height: 68px; border-radius: 12px; object-fit: contain; background: rgba(3,8,15,.55); }
+.main-slot-active > div:last-child { display: grid; gap: 4px; min-width: 0; }
+.main-slot-active strong { color: #f4f8ff; font-size: 14px; }
+.main-slot-active span { color: #9bb8d8; font-size: 11px; }
+.main-slot-active small { color: #b8c7dc; font-size: 11px; line-height: 1.5; }
+.main-slot-empty { display: flex; align-items: center; gap: 12px; margin-top: 17px; padding: 13px; border: 1px dashed #34445d; border-radius: 13px; background: rgba(4,9,16,.34); }
+.main-slot-empty > span { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 12px; color: #9ecbff; background: rgba(105,183,255,.09); font-size: 25px; }
+.main-slot-empty > div { display: grid; gap: 4px; }
+.main-slot-empty strong { color: var(--ink); font-size: 12px; }
+.main-slot-empty small, .main-slot-no-options { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.main-slot-actions { display: grid; align-content: center; gap: 12px; min-width: 0; }
+.main-slot-actions .field { display: grid; gap: 7px; }
+.main-slot-actions select { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--line-strong); border-radius: 11px; color: var(--ink); background: #0a111c; }
+.main-slot-buttons { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; }
+.main-slot-buttons .button { width: 100%; justify-content: center; }
+.main-slot-no-options { display: block; }
+.creature-main-bonus { display: grid; gap: 5px; margin-top: 11px; padding: 11px 12px; border: 1px solid rgba(105,183,255,.22); border-radius: 11px; background: rgba(105,183,255,.06); }
+.creature-main-bonus span { color: #8dbdea; font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.creature-main-bonus strong { color: #e6f3ff; font-size: 12px; line-height: 1.6; }
+.leaderboards-page { display: grid; gap: 18px; }
+.leaderboards-page > .page-title-row { align-items: center; }
+.leaderboard-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; align-items: stretch; }
+.leaderboard-card { min-width: 0; padding: 18px; }
+.leaderboard-heading { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
+.leaderboard-icon { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border: 1px solid rgba(105,183,255,.24); border-radius: 13px; background: rgba(105,183,255,.08); color: #9bd1ff; font-size: 22px; }
+.leaderboard-heading > div { min-width: 0; }
+.leaderboard-heading .eyebrow { margin: 0 0 4px; }
+.leaderboard-heading h2 { margin: 0; color: var(--ink); font-size: clamp(16px,2.2vw,19px); line-height: 1.25; letter-spacing: -.025em; }
+.leaderboard-heading p:not(.eyebrow) { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.leaderboard-list { display: grid; gap: 7px; padding-top: 12px; }
+.leaderboard-row { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 9px; min-width: 0; padding: 10px 9px; border: 1px solid transparent; border-radius: 11px; background: rgba(4,9,16,.35); }
+.leaderboard-row.is-first { border-color: rgba(240,201,104,.28); background: linear-gradient(100deg,rgba(240,201,104,.08),rgba(4,9,16,.35)); }
+.leaderboard-rank { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 8px; color: #a8bad2; background: #1b2a3e; font-size: 11px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.leaderboard-row.is-first .leaderboard-rank { color: #271b00; background: var(--gold); }
+.leaderboard-player, .leaderboard-score { display: grid; gap: 3px; min-width: 0; }
+.leaderboard-player strong { overflow: hidden; color: #edf4ff; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.leaderboard-player small, .leaderboard-score small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.leaderboard-score { text-align: right; }
+.leaderboard-score strong { color: #92e2b7; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.leaderboard-score--loss strong { color: #ffa39d; }
+.leaderboard-empty { padding: 24px 10px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
+.leaderboard-card--future { grid-column: 1 / -1; }
+.leaderboard-card--future .leaderboard-heading { border-bottom: 0; }
+.leaderboard-future-lock { display: grid; justify-items: center; gap: 8px; padding: 20px 14px 24px; border: 1px dashed #34445d; border-radius: 13px; background: rgba(4,9,16,.3); text-align: center; }
+.leaderboard-future-lock > span { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px; background: rgba(105,183,255,.08); color: #9acfff; font-size: 24px; }
+.leaderboard-future-lock strong { color: #dcecff; font-size: 15px; }
+.leaderboard-future-lock p { max-width: 510px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+@media (max-width: 760px) {
+  .main-slot-panel { grid-template-columns: minmax(0,1fr); gap: 18px; padding: 17px; }
+  .leaderboard-grid { grid-template-columns: minmax(0,1fr); }
+  .leaderboard-card--future { grid-column: auto; }
+}
+@media (max-width: 420px) {
+  .leaderboard-card { padding: 13px; }
+  .leaderboard-row { grid-template-columns: 25px minmax(0,1fr) auto; gap: 7px; padding: 9px 7px; }
+  .leaderboard-rank { width: 24px; height: 24px; }
+  .leaderboard-player strong { font-size: 11px; }
+  .leaderboard-score strong { font-size: 11px; }
+}

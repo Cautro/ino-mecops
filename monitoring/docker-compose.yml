@@ -9,11 +9,12 @@ services:
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:9091:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     networks:
       - monitoring

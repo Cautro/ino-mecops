@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { APIError, api, isDemoMode } from './api';
 import AdminPanel from './AdminPanel';
-import type { CollectionSpecies, Creature, EggKind, HatchEggResult, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult, SubscriptionClaimResult, SubscriptionStatus } from './api';
+import type { CollectionSpecies, Creature, EggKind, HatchEggResult, LeaderboardData, MainBonusType, MainSlotState, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult, SubscriptionClaimResult, SubscriptionStatus } from './api';
 
 // ==================== Типы и константы ====================
 
-type Page = 'home' | 'collection' | 'shop' | 'admin';
+type Page = 'home' | 'collection' | 'shop' | 'leaderboards' | 'admin';
 type Notice = { kind: 'success' | 'error' | 'info'; title: string; message: string };
 
 const RARITIES: { value: Rarity; label: string }[] = [
@@ -34,6 +34,15 @@ function formatDate(value?: string): string {
 function creatureName(slug: string): string {
   const names: Record<string, string> = { 'ino-sprout': 'Иноспрут' };
   return names[slug] ?? slug.replaceAll('-', ' ').replace(/^./, (char) => char.toUpperCase());
+}
+
+function mainBonusLabel(type?: MainBonusType, multiplier = 1): string {
+  switch (type) {
+    case 'slot_chance': return `Шанс барабана ×${multiplier}: сервер выберет лучший результат из ${multiplier} прокруток.`;
+    case 'slot_payout': return `Выплата барабана ×${multiplier}: денежный выигрыш увеличивается в ${multiplier} раз.`;
+    case 'passive_income': return `Пассивный доход ×${multiplier}: общий доход всех иномеконов увеличивается в ${multiplier} раз.`;
+    default: return 'У этого иномекона нет бонуса основного слота.';
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -137,8 +146,12 @@ export function App() {
   const [slotRolling, setSlotRolling] = useState(false);
   const [slotResult, setSlotResult] = useState<SlotSpinResult | null>(null);
   const [selectedSpeciesID, setSelectedSpeciesID] = useState<number | null>(null);
-
-
+  const [mainSlotData, setMainSlotData] = useState<MainSlotState | null>(null);
+  const [mainSlotChoiceID, setMainSlotChoiceID] = useState<number | ''>('');
+  const [mainSlotBusy, setMainSlotBusy] = useState(false);
+  const [leaderboards, setLeaderboards] = useState<LeaderboardData | null>(null);
+  const [leaderboardsLoading, setLeaderboardsLoading] = useState(false);
+  const [leaderboardsError, setLeaderboardsError] = useState('');
 
   const demoMode = isDemoMode;
   const inTelegram = Boolean(telegram && initData);
@@ -173,6 +186,28 @@ export function App() {
     [ownedCreatures, slotCreatureID]
   );
 
+  const refreshMainSlot = useCallback(async () => {
+    const fresh = await api.mainSlot(initData);
+    setMainSlotData(fresh);
+    setMainSlotChoiceID(fresh.selected_creature_id ?? '');
+    return fresh;
+  }, [initData]);
+
+  const refreshLeaderboards = useCallback(async () => {
+    setLeaderboardsLoading(true);
+    setLeaderboardsError('');
+    try {
+      const fresh = await api.leaderboards(initData);
+      setLeaderboards(fresh);
+      return fresh;
+    } catch (error) {
+      setLeaderboardsError(errorMessage(error));
+      throw error;
+    } finally {
+      setLeaderboardsLoading(false);
+    }
+  }, [initData]);
+
   const loadData = useCallback(async () => {
     if (!canOpen) {
       setLoading(false);
@@ -184,6 +219,8 @@ export function App() {
       const [playerResponse, creatureResponse] = await Promise.all([api.me(initData), api.creatures(initData)]);
       setPlayer(playerResponse);
       setOwnedCreatures(creatureResponse.items ?? []);
+      try { await refreshMainSlot(); } catch (error) { setMainSlotData(null); setNotice({ kind: 'error', title: 'Основной слот недоступен', message: errorMessage(error) }); }
+      try { await refreshLeaderboards(); } catch { /* Leaderboard page displays a retry action. */ }
       if (!tutorialAutoOpened.current) {
         const tutorialKey = `inomecops:onboarding-seen:${playerResponse.telegram_id}`;
         let tutorialSeen = false;
@@ -250,7 +287,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, [canOpen, initData]);
+  }, [canOpen, initData, refreshMainSlot, refreshLeaderboards]);
 
   useEffect(() => {
     telegram?.setHeaderColor?.('#0e1210');
@@ -329,7 +366,48 @@ export function App() {
   const showPage = (next: Page) => {
     setPage(next);
     setNotice(null);
+    if (next === 'leaderboards') void refreshLeaderboards().catch(() => undefined);
+    if (next === 'home') void refreshMainSlot().catch(() => undefined);
     telegram?.HapticFeedback?.selectionChanged();
+  };
+
+  const saveMainSlot = async () => {
+    if (mainSlotChoiceID === '') {
+      setNotice({ kind: 'error', title: 'Выбери иномекона', message: 'Чтобы установить основной слот, сначала выбери принадлежащего тебе иномекона.' });
+      return;
+    }
+    setMainSlotBusy(true);
+    try {
+      const state = await api.setMainSlot(initData, mainSlotChoiceID);
+      setMainSlotData(state);
+      setMainSlotChoiceID(state.selected_creature_id ?? '');
+      const freshPlayer = await api.me(initData);
+      setPlayer(freshPlayer);
+      setNotice({ kind: 'success', title: 'Основной иномекон установлен', message: state.selected ? `${state.selected.name}: ${mainBonusLabel(state.selected.bonus_type, state.selected.bonus_multiplier)}` : 'Слот установлен.' });
+      void refreshLeaderboards().catch(() => undefined);
+      telegram?.HapticFeedback?.notificationOccurred('success');
+    } catch (error) {
+      setNotice({ kind: 'error', title: 'Не удалось изменить основной слот', message: errorMessage(error) });
+      telegram?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      setMainSlotBusy(false);
+    }
+  };
+
+  const clearMainSlot = async () => {
+    setMainSlotBusy(true);
+    try {
+      const state = await api.clearMainSlot(initData);
+      setMainSlotData(state);
+      setMainSlotChoiceID('');
+      setPlayer(await api.me(initData));
+      setNotice({ kind: 'success', title: 'Основной слот освобождён', message: 'Дополнительный бонус больше не применяется.' });
+      void refreshLeaderboards().catch(() => undefined);
+    } catch (error) {
+      setNotice({ kind: 'error', title: 'Не удалось освободить слот', message: errorMessage(error) });
+    } finally {
+      setMainSlotBusy(false);
+    }
   };
 
   const closeSubscriptionModal = () => setSubscriptionModalOpen(false);
@@ -436,6 +514,8 @@ export function App() {
           setSpecies(freshCatalogue.items ?? []);
         })
         .catch(() => undefined);
+      void refreshMainSlot().catch(() => undefined);
+      if (page === 'leaderboards') void refreshLeaderboards().catch(() => undefined);
       telegram?.HapticFeedback?.notificationOccurred(result.win_type === 'miss' ? 'warning' : 'success');
     } catch (error) {
       window.clearInterval(animationTimer);
@@ -458,6 +538,8 @@ export function App() {
     setOwnedCreatures(freshCreatures.items ?? []);
     setSpecies(freshCatalog.items ?? []);
     setShopData(freshShop);
+    await refreshMainSlot().catch(() => undefined);
+    if (page === 'leaderboards') await refreshLeaderboards().catch(() => undefined);
   };
 
   const buyEgg = async (rarity: EggKind) => {
@@ -574,6 +656,7 @@ export function App() {
           <button className={page === 'shop' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('shop')}>
             Магазин <span className="nav-count">{shopData?.eggs.length ?? 0}</span>
           </button>
+          <button className={page === 'leaderboards' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('leaderboards')}>Лидерборд</button>
           <button className="nav-item tutorial-nav-item" onClick={openTutorial}>Как играть</button>
           {subscriptionStatus?.enabled && <button className="nav-item subscription-nav-item" onClick={() => { setSubscriptionError(''); setSubscriptionModalOpen(true); }}>Бонус</button>}
           {isAdmin && <button className={page === 'admin' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('admin')}>Администрирование</button>}
@@ -607,6 +690,25 @@ export function App() {
                 </div>
               </div>
             </section>
+            <section className="surface main-slot-panel" aria-label="Основной иномекон">
+              <div className="main-slot-copy">
+                <p className="eyebrow">ТВОЙ ПЕРСОНАЛЬНЫЙ БОНУС</p>
+                <h2>Основной иномекон</h2>
+                <p>Выбери одного из своих иномеконов. Его бонус будет действовать, пока он установлен в слот. Ты можешь менять его в любое время.</p>
+                {mainSlotData?.selected ? (
+                  <div className="main-slot-active">
+                    <ImagePreview src={mainSlotData.selected.image_url} name={mainSlotData.selected.name} />
+                    <div><strong>{mainSlotData.selected.name}</strong><span>{RARITIES.find((item) => item.value === mainSlotData.selected?.rarity)?.label ?? mainSlotData.selected.rarity}</span><small>{mainBonusLabel(mainSlotData.selected.bonus_type, mainSlotData.selected.bonus_multiplier)}</small></div>
+                  </div>
+                ) : <div className="main-slot-empty"><span>◇</span><div><strong>Слот пока пуст</strong><small>Выбери иномекона ниже, чтобы активировать его бонус.</small></div></div>}
+              </div>
+              <div className="main-slot-actions">
+                <label className="field"><span className="field-label">Иномекон из коллекции</span><select value={mainSlotChoiceID} disabled={mainSlotBusy || !(mainSlotData?.options.length)} onChange={(event) => setMainSlotChoiceID(event.target.value ? Number(event.target.value) : '')}><option value="">Выбрать иномекона…</option>{(mainSlotData?.options ?? []).map((item) => <option key={item.creature_id} value={item.creature_id}>{item.name} · {RARITIES.find((rarity) => rarity.value === item.rarity)?.label ?? item.rarity}</option>)}</select></label>
+                <div className="main-slot-buttons"><button className="button button--primary" type="button" disabled={mainSlotBusy || mainSlotChoiceID === '' || mainSlotChoiceID === mainSlotData?.selected_creature_id} onClick={() => void saveMainSlot()}>{mainSlotBusy ? 'Сохраняем…' : 'Установить основным'}</button><button className="button button--secondary" type="button" disabled={mainSlotBusy || !mainSlotData?.selected} onClick={() => void clearMainSlot()}>Освободить слот</button></div>
+                {mainSlotData?.options.length === 0 && <small className="main-slot-no-options">Сначала получи яйцо в магазине и вылупи его — тогда появится первый кандидат для слота.</small>}
+              </div>
+            </section>
+
             <section className="slot-layout" aria-label="Барабан удачи">
               <article className="surface slot-machine">
                 <div className="slot-machine-heading">
@@ -864,6 +966,22 @@ export function App() {
           </>
         )}
 
+        {page === 'leaderboards' && (
+          <section className="leaderboards-page">
+            <div className="page-title-row"><div><p className="eyebrow">РЕЙТИНГ ИГРОКОВ</p><h1>Лидерборд</h1><p className="page-lead">Три таблицы — коллекция, результаты барабана и будущие соревнования.</p></div><button className="button button--secondary" type="button" disabled={leaderboardsLoading} onClick={() => void refreshLeaderboards().catch(() => undefined)}>{leaderboardsLoading ? 'Обновляем…' : 'Обновить'}</button></div>
+            {leaderboardsError && <div className="notice notice--error" role="alert"><div><strong>Не удалось загрузить рейтинг</strong><span>{leaderboardsError}</span><button className="text-button" onClick={() => void refreshLeaderboards().catch(() => undefined)}>Попробовать ещё раз</button></div></div>}
+            {leaderboardsLoading && !leaderboards ? <div className="surface admin-empty">Загружаем лидерборд…</div> : <div className="leaderboard-grid">
+              <article className="surface leaderboard-card"><div className="leaderboard-heading"><span className="leaderboard-icon">♧</span><div><p className="eyebrow">ЛИГА 01</p><h2>Коллекционеры</h2><p>Сначала пассивный доход в час, при равенстве — размер коллекции.</p></div></div>
+                {(leaderboards?.collection ?? []).length ? <div className="leaderboard-list">{leaderboards!.collection.map((item) => <div className={`leaderboard-row${item.rank === 1 ? ' is-first' : ''}`} key={`${item.rank}-${item.name}`}><span className="leaderboard-rank">{item.rank}</span><div className="leaderboard-player"><strong>{item.name}</strong><small>{item.creature_count} иномеконов</small></div><div className="leaderboard-score"><strong>+{formatNumber(item.passive_gold_per_hour)}</strong><small>золота/ч</small></div></div>)}</div> : <div className="leaderboard-empty">Пока нет игроков в рейтинге.</div>}
+              </article>
+              <article className="surface leaderboard-card"><div className="leaderboard-heading"><span className="leaderboard-icon">↻</span><div><p className="eyebrow">ЛИГА 02</p><h2>Главные неудачники барабана</h2><p>Рейтинг по чистой потере золота: ставки минус выплаты.</p></div></div>
+                {(leaderboards?.slot_losses ?? []).length ? <div className="leaderboard-list">{leaderboards!.slot_losses.map((item) => <div className={`leaderboard-row${item.rank === 1 ? ' is-first' : ''}`} key={`${item.rank}-${item.name}`}><span className="leaderboard-rank">{item.rank}</span><div className="leaderboard-player"><strong>{item.name}</strong><small>{formatNumber(item.spins)} прокруток · поставлено {formatNumber(item.total_bet_gold)}</small></div><div className="leaderboard-score leaderboard-score--loss"><strong>−{formatNumber(item.total_lost_gold)}</strong><small>золота</small></div></div>)}</div> : <div className="leaderboard-empty">Пока никто не проиграл золото в барабане. Берегите это достижение 😅</div>}
+              </article>
+              <article className="surface leaderboard-card leaderboard-card--future"><div className="leaderboard-heading"><span className="leaderboard-icon">⚔</span><div><p className="eyebrow">ЛИГА 03</p><h2>Легенды арены</h2><p>Победы и общая сумма заработка за них.</p></div></div><div className="leaderboard-future-lock"><span>◷</span><strong>{leaderboards?.battles.message ?? 'В скором будущем'}</strong><p>Рейтинг появится, когда будет готова боевая система. Сейчас здесь нет фиктивных результатов.</p></div></article>
+            </div>}
+          </section>
+        )}
+
         {page === 'shop' && (
           <section className="subpage shop-page">
             <div className="subpage-heading">
@@ -1031,6 +1149,7 @@ export function App() {
                   <div className="creature-stat"><span>Урон</span><strong>{formatNumber(selectedSpecies.damage ?? 0)}</strong></div>
                   <div className="creature-stat"><span>Шанс крит. удара</span><strong>{formatNumber(selectedSpecies.crit_chance ?? 0)}%</strong></div>
                 </div>
+                {selectedSpecies.main_bonus_type && selectedSpecies.main_bonus_type !== 'none' && <div className="creature-main-bonus"><span>Бонус в основном слоте</span><strong>{mainBonusLabel(selectedSpecies.main_bonus_type, selectedSpecies.main_bonus_multiplier ?? 1)}</strong></div>}
                 <p className="creature-modal-footnote">Характеристики этого вида открыты в твоём каталоге.</p>
               </>
             )}

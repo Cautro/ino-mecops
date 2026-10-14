@@ -36,15 +36,32 @@ func (s *Store) Overview(ctx context.Context, telegramID int64) (Overview, error
 		out.Username = username.String
 	}
 	out.CreatedAt, out.LastPassiveClaimAt = created, last
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(s.passive_gold_per_hour),0)::bigint, COUNT(pc.id)::int FROM player_creatures pc JOIN creature_species s ON s.slug=pc.species_slug WHERE pc.owner_telegram_id=$1`, telegramID).Scan(&out.PassiveGoldPerHour, &out.OwnedCreatureCount); err != nil {
+	var basePassiveRate int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(s.passive_gold_per_hour),0)::bigint, COUNT(pc.id)::int FROM player_creatures pc JOIN creature_species s ON s.slug=pc.species_slug WHERE pc.owner_telegram_id=$1`, telegramID).Scan(&basePassiveRate, &out.OwnedCreatureCount); err != nil {
 		return Overview{}, err
+	}
+	bonus, err := currentMainBonus(ctx, tx, telegramID)
+	if err != nil {
+		return Overview{}, err
+	}
+	out.PassiveGoldPerHour = basePassiveRate
+	if bonus.Type == string(MainBonusPassiveIncome) {
+		out.PassiveGoldPerHour = basePassiveRate * int64(bonus.Multiplier)
 	}
 	var earnedText string
 	if err := tx.QueryRowContext(ctx, `
-		SELECT (COALESCE(SUM(s.passive_gold_per_hour::numeric * GREATEST(0, EXTRACT(EPOCH FROM (clock_timestamp() - GREATEST($2::timestamptz, pc.obtained_at))) / 3600)),0) + p.passive_gold_remainder)::text
+		SELECT (
+			COALESCE(SUM(s.passive_gold_per_hour::numeric * GREATEST(0, EXTRACT(EPOCH FROM (clock_timestamp() - GREATEST($2::timestamptz, pc.obtained_at))) / 3600)),0)
+			+ COALESCE(SUM(s.passive_gold_per_hour::numeric * GREATEST(0, EXTRACT(EPOCH FROM (clock_timestamp() - GREATEST($2::timestamptz, pc.obtained_at, ms.selected_at))) / 3600)
+				* CASE WHEN main_species.main_bonus_type='passive_income' THEN (main_species.main_bonus_multiplier - 1) ELSE 0 END),0)
+			+ p.passive_gold_remainder
+		)::text
 		FROM players p
 		LEFT JOIN player_creatures pc ON pc.owner_telegram_id=p.telegram_id
 		LEFT JOIN creature_species s ON s.slug=pc.species_slug
+		LEFT JOIN player_main_slots ms ON ms.player_telegram_id=p.telegram_id
+		LEFT JOIN player_creatures main_pc ON main_pc.id=ms.player_creature_id
+		LEFT JOIN creature_species main_species ON main_species.slug=main_pc.species_slug
 		WHERE p.telegram_id=$1
 		GROUP BY p.passive_gold_remainder`, telegramID, last).Scan(&earnedText); err != nil {
 		return Overview{}, err

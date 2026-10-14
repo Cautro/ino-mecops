@@ -63,7 +63,8 @@ func (u *UseCase) CreateSpecies(ctx context.Context, input SpeciesInput) (Specie
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	input.ImageURL = strings.TrimSpace(input.ImageURL)
-	if input.SellPriceGold < 0 || input.SellPriceGold > 1_000_000_000 || !validSpeciesInput(input.Slug, input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, true) {
+	input.MainBonusType, input.MainBonusMultiplier = normalizeMainBonus(input.MainBonusType, input.MainBonusMultiplier)
+	if input.SellPriceGold < 0 || input.SellPriceGold > 1_000_000_000 || !validSpeciesInput(input.Slug, input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, true) || !validMainBonus(input.MainBonusType, input.MainBonusMultiplier) {
 		return Species{}, ErrInvalidInput
 	}
 	if err := u.ensureAbilityExists(ctx, input.AbilityID); err != nil {
@@ -75,7 +76,8 @@ func (u *UseCase) UpdateSpecies(ctx context.Context, id int64, input SpeciesUpda
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	input.ImageURL = strings.TrimSpace(input.ImageURL)
-	if id <= 0 || input.SellPriceGold < 0 || input.SellPriceGold > 1_000_000_000 || !validSpeciesInput("valid-slug", input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, false) {
+	input.MainBonusType, input.MainBonusMultiplier = normalizeMainBonus(input.MainBonusType, input.MainBonusMultiplier)
+	if id <= 0 || input.SellPriceGold < 0 || input.SellPriceGold > 1_000_000_000 || !validSpeciesInput("valid-slug", input.Name, input.Description, input.ImageURL, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, false) || !validMainBonus(input.MainBonusType, input.MainBonusMultiplier) {
 		return Species{}, ErrInvalidInput
 	}
 	if err := u.ensureAbilityExists(ctx, input.AbilityID); err != nil {
@@ -94,6 +96,21 @@ func (u *UseCase) DeleteSpecies(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return u.repo.DeleteSpecies(ctx, id)
+}
+
+func normalizeMainBonus(kind string, multiplier int) (string, int) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "none"
+	}
+	if multiplier == 0 {
+		multiplier = 1
+	}
+	return kind, multiplier
+}
+
+func validMainBonus(kind string, multiplier int) bool {
+	return (kind == "none" || kind == "slot_chance" || kind == "slot_payout" || kind == "passive_income") && multiplier >= 1 && multiplier <= 10
 }
 
 func validateAbilityInput(slug, name, description, element string, power int, accuracy float64, cooldown int, effect string, effectValue, effectDuration int) error {

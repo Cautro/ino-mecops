@@ -157,6 +157,8 @@ func (r *Registry) Handler() http.Handler {
 		fmt.Fprintf(w, "inomecops_process_start_time_seconds %.3f\n", float64(startedAt.UnixNano())/1e9)
 		fmt.Fprintln(w, "# HELP inomecops_http_requests_total Total HTTP requests handled by method, route pattern and status.")
 		fmt.Fprintln(w, "# TYPE inomecops_http_requests_total counter")
+		fmt.Fprintln(w, "# HELP inomecops_http_errors_total Total HTTP responses with status 4xx or 5xx, grouped by method, route and status.")
+		fmt.Fprintln(w, "# TYPE inomecops_http_errors_total counter")
 		fmt.Fprintln(w, "# HELP inomecops_http_request_duration_seconds HTTP request duration histogram in seconds.")
 		fmt.Fprintln(w, "# TYPE inomecops_http_request_duration_seconds histogram")
 
@@ -164,6 +166,9 @@ func (r *Registry) Handler() http.Handler {
 			o := copyOf[k]
 			labels := fmt.Sprintf(`method="%s",route="%s",status="%s"`, promEscape(k.method), promEscape(k.route), promEscape(k.status))
 			fmt.Fprintf(w, "inomecops_http_requests_total{%s} %d\n", labels, o.count)
+			if status, err := strconv.Atoi(k.status); err == nil && status >= 400 {
+				fmt.Fprintf(w, "inomecops_http_errors_total{%s} %d\n", labels, o.count)
+			}
 			for i, bound := range histogramBounds {
 				fmt.Fprintf(w, "inomecops_http_request_duration_seconds_bucket{%s,le=%q} %d\n", labels, strconv.FormatFloat(bound, 'f', -1, 64), o.buckets[i])
 			}

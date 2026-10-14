@@ -93,6 +93,7 @@ export type SellCreatureResult = {
 };
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
+export type MainBonusType = 'none' | 'slot_chance' | 'slot_payout' | 'passive_income';
 
 export type CollectionSpecies = {
   id: number;
@@ -110,6 +111,8 @@ export type CollectionSpecies = {
   ability_id?: number;
   ability_name?: string;
   ability_slug?: string;
+  main_bonus_type?: MainBonusType;
+  main_bonus_multiplier?: number;
 };
 
 export type Species = {
@@ -131,6 +134,8 @@ export type Species = {
   created_at: string;
   updated_at: string;
   is_featured: boolean;
+  main_bonus_type: MainBonusType;
+  main_bonus_multiplier: number;
 };
 
 export type SpeciesInput = {
@@ -146,6 +151,8 @@ export type SpeciesInput = {
   crit_chance: number;
   ability_id: number;
   is_featured: boolean;
+  main_bonus_type: MainBonusType;
+  main_bonus_multiplier: number;
 };
 
 export type SpeciesUpdateInput = Omit<SpeciesInput, 'slug'>;
@@ -199,6 +206,9 @@ export type SlotSpinResult = {
   gold_balance: number;
   win_type: 'miss' | 'pair' | 'triple' | 'creature';
   multiplier: number;
+  main_bonus_type?: MainBonusType;
+  main_bonus_multiplier?: number;
+  bonus_applied?: boolean;
   creature_slug?: string;
   creature_name?: string;
   bet_creature_id?: number;
@@ -207,6 +217,46 @@ export type SlotSpinResult = {
   creature_stake_lost?: boolean;
   creature_rewards?: SlotCreatureReward[];
   message: string;
+};
+
+export type MainSlotOption = {
+  creature_id: number;
+  species_slug: string;
+  name: string;
+  image_url: string;
+  rarity: Rarity;
+  passive_gold_per_hour: number;
+  bonus_type: MainBonusType;
+  bonus_multiplier: number;
+  selected: boolean;
+};
+
+export type MainSlotState = {
+  selected_creature_id?: number;
+  selected?: MainSlotOption;
+  options: MainSlotOption[];
+};
+
+export type CollectionLeaderboardEntry = {
+  rank: number;
+  name: string;
+  creature_count: number;
+  passive_gold_per_hour: number;
+};
+
+export type SlotLossLeaderboardEntry = {
+  rank: number;
+  name: string;
+  total_lost_gold: number;
+  total_bet_gold: number;
+  total_payout_gold: number;
+  spins: number;
+};
+
+export type LeaderboardData = {
+  collection: CollectionLeaderboardEntry[];
+  slot_losses: SlotLossLeaderboardEntry[];
+  battles: { available: boolean; message: string; items: unknown[] };
 };
 
 export type Batch = {
@@ -265,6 +315,7 @@ let demoGold = 350;
 let demoCreatures: Creature[] = [
   { id: 1, species_slug: 'ino-sprout', obtained_at: new Date().toISOString() },
 ];
+let demoMainCreatureID: number | null = 1;
 
 let demoBatches: Batch[] = [
   {
@@ -312,6 +363,8 @@ let demoSpecies: Species[] = [
     ability_slug: 'spark',
     is_active: true,
     is_featured: false,
+    main_bonus_type: 'none',
+    main_bonus_multiplier: 1,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -332,6 +385,8 @@ let demoSpecies: Species[] = [
     ability_slug: 'spark',
     is_active: true,
     is_featured: false,
+    main_bonus_type: 'none',
+    main_bonus_multiplier: 1,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -352,6 +407,8 @@ let demoSpecies: Species[] = [
     ability_slug: 'spark',
     is_active: true,
     is_featured: false,
+    main_bonus_type: 'none',
+    main_bonus_multiplier: 1,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -423,6 +480,10 @@ export const api = {
   me: (initData: string) => request<Player>('/api/v1/game/overview', initData),
   spinSlot: (initData: string, payload: SlotSpinRequest) =>
     request<SlotSpinResult>('/api/v1/game/slot', initData, { method: 'POST', body: payload }),
+  mainSlot: (initData: string) => request<MainSlotState>('/api/v1/game/main-creature', initData),
+  setMainSlot: (initData: string, creatureID: number) => request<MainSlotState>('/api/v1/game/main-creature', initData, { method: 'PUT', body: { creature_id: creatureID } }),
+  clearMainSlot: (initData: string) => request<MainSlotState>('/api/v1/game/main-creature', initData, { method: 'DELETE' }),
+  leaderboards: (initData: string) => request<LeaderboardData>('/api/v1/leaderboards', initData),
   creatures: (initData: string) => request<{ items: Creature[] }>('/api/v1/me/creatures', initData),
   shop: (initData: string) => request<ShopData>('/api/v1/shop', initData),
   listAdminEggProducts: (initData: string) => request<{ items: EggProduct[] }>('/api/v1/admin/shop/eggs', initData),
@@ -528,16 +589,57 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   await new Promise((resolve) => window.setTimeout(resolve, 100));
 
   if (path === '/api/v1/game/overview' || path === '/api/v1/me') {
+    const basePassive = demoCreatures.reduce((sum, creature) => sum + (demoSpecies.find((species) => species.slug === creature.species_slug)?.passive_gold_per_hour ?? 0), 0);
+    const mainCreature = demoCreatures.find((creature) => creature.id === demoMainCreatureID);
+    const mainSpecies = demoSpecies.find((species) => species.slug === mainCreature?.species_slug);
+    const passiveRate = mainSpecies?.main_bonus_type === 'passive_income' ? basePassive * (mainSpecies.main_bonus_multiplier ?? 1) : basePassive;
     return {
       telegram_id: 100000001,
       username: 'demo_player',
       first_name: 'Игрок',
       gold: demoGold,
       created_at: new Date().toISOString(),
-      passive_gold_per_hour: demoCreatures.length * 5,
+      passive_gold_per_hour: passiveRate,
       passive_gold_claimed: 0,
       last_passive_claim_at: new Date().toISOString(),
       owned_creature_count: demoCreatures.length,
+    } as T;
+  }
+
+  if (path === '/api/v1/game/main-creature') {
+    if (options.method === 'PUT') {
+      const creatureID = Number((options.body as { creature_id?: number })?.creature_id);
+      if (!demoCreatures.some((creature) => creature.id === creatureID)) throw new APIError('Этот иномекон не найден в твоей коллекции.', 409, 'creature_not_owned');
+      demoMainCreatureID = creatureID;
+    } else if (options.method === 'DELETE') {
+      demoMainCreatureID = null;
+    }
+    const optionsList: MainSlotOption[] = demoCreatures.flatMap((creature) => {
+      const species = demoSpecies.find((item) => item.slug === creature.species_slug);
+      if (!species) return [];
+      return [{
+        creature_id: creature.id, species_slug: species.slug, name: species.name, image_url: species.image_url,
+        rarity: species.rarity, passive_gold_per_hour: species.passive_gold_per_hour,
+        bonus_type: species.main_bonus_type ?? 'none', bonus_multiplier: species.main_bonus_multiplier ?? 1,
+        selected: creature.id === demoMainCreatureID,
+      }];
+    });
+    const selected = optionsList.find((item) => item.selected);
+    return { selected_creature_id: selected?.creature_id, selected, options: optionsList } as T;
+  }
+
+  if (path === '/api/v1/leaderboards') {
+    const basePassive = demoCreatures.reduce((sum, creature) => {
+      const species = demoSpecies.find((item) => item.slug === creature.species_slug);
+      return sum + (species?.passive_gold_per_hour ?? 0);
+    }, 0);
+    const mainCreature = demoCreatures.find((creature) => creature.id === demoMainCreatureID);
+    const mainSpecies = demoSpecies.find((species) => species.slug === mainCreature?.species_slug);
+    const passive = mainSpecies?.main_bonus_type === 'passive_income' ? basePassive * (mainSpecies.main_bonus_multiplier ?? 1) : basePassive;
+    return {
+      collection: [{ rank: 1, name: '@demo_player', creature_count: demoCreatures.length, passive_gold_per_hour: passive }],
+      slot_losses: [],
+      battles: { available: false, message: 'В скором будущем', items: [] },
     } as T;
   }
 
@@ -633,18 +735,35 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     const payload = (options.body ?? {}) as Partial<SlotSpinRequest> & { bet?: number };
     const betType = payload.bet_type ?? 'gold';
     const symbols = ['🍒', '🍋', '💎', '⭐', '🧬'];
-    const result = [0, 1, 2].map(() => symbols[Math.floor(Math.random() * symbols.length)]) as [string, string, string];
+    const multipliers: Record<string, number> = { '🍒': 4, '🍋': 5, '💎': 7, '⭐': 10, '🧬': 15 };
+    const selectedMainCreature = demoCreatures.find((creature) => creature.id === demoMainCreatureID);
+    const selectedMainSpecies = demoSpecies.find((species) => species.slug === selectedMainCreature?.species_slug);
+    const mainBonusType = selectedMainSpecies?.main_bonus_type ?? 'none';
+    const mainBonusMultiplier = Math.max(1, Math.min(10, selectedMainSpecies?.main_bonus_multiplier ?? 1));
+    const attempts = mainBonusType === 'slot_chance' ? mainBonusMultiplier : 1;
+    let result: [string, string, string] = ['🍒', '🍋', '💎'];
     let payout = 0;
     let winType: SlotSpinResult['win_type'] = 'miss';
     let multiplier = 0;
-
-    if (result[0] === result[1] && result[1] === result[2]) {
-      const multipliers: Record<string, number> = { '🍒': 4, '🍋': 5, '💎': 7, '⭐': 10, '🧬': 15 };
-      multiplier = multipliers[result[0]];
-      winType = result[0] === '🧬' ? 'creature' : 'triple';
-    } else if (result[0] === result[1] || result[0] === result[2] || result[1] === result[2]) {
-      winType = 'pair';
-      multiplier = 1.2;
+    let bestScore = -1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const candidate = [0, 1, 2].map(() => symbols[Math.floor(Math.random() * symbols.length)]) as [string, string, string];
+      let candidateWin: SlotSpinResult['win_type'] = 'miss';
+      let candidateMultiplier = 0;
+      if (candidate[0] === candidate[1] && candidate[1] === candidate[2]) {
+        candidateMultiplier = multipliers[candidate[0]];
+        candidateWin = candidate[0] === '🧬' ? 'creature' : 'triple';
+      } else if (candidate[0] === candidate[1] || candidate[0] === candidate[2] || candidate[1] === candidate[2]) {
+        candidateWin = 'pair';
+        candidateMultiplier = 1.2;
+      }
+      const score = candidateWin === 'miss' ? 0 : candidateWin === 'pair' ? 1.2 : candidateMultiplier;
+      if (attempt === 0 || score > bestScore) {
+        result = candidate;
+        winType = candidateWin;
+        multiplier = candidateMultiplier;
+        bestScore = score;
+      }
     }
 
     if (betType === 'creature') {
@@ -689,6 +808,9 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
         gold_balance: demoGold,
         win_type: winType,
         multiplier,
+        main_bonus_type: mainBonusType,
+        main_bonus_multiplier: mainBonusMultiplier,
+        bonus_applied: mainBonusType === 'slot_chance' && mainBonusMultiplier > 1,
         bet_creature_id: creatureID,
         bet_creature_slug: staked.species_slug,
         bet_creature_name: creatureNameForDemo(staked.species_slug),
@@ -721,6 +843,12 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     } else if (winType === 'pair') {
       payout = Math.floor((bet * 12) / 10);
     }
+    let bonusApplied = mainBonusType === 'slot_chance' && mainBonusMultiplier > 1;
+    if (mainBonusType === 'slot_payout' && payout > 0) {
+      payout *= mainBonusMultiplier;
+      multiplier *= mainBonusMultiplier;
+      bonusApplied = mainBonusMultiplier > 1;
+    }
     demoGold = demoGold - bet + payout;
     const message = winType === 'miss'
       ? 'Мимо! Ставка сгорела. Крути ещё раз.'
@@ -740,6 +868,9 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
       gold_balance: demoGold,
       win_type: winType,
       multiplier,
+      main_bonus_type: mainBonusType,
+      main_bonus_multiplier: mainBonusMultiplier,
+      bonus_applied: bonusApplied,
       creature_slug: creatureSlug,
       creature_name: creatureName,
       message,
@@ -915,6 +1046,8 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
         ability_slug: ability.slug,
         id: demoSpeciesID++,
         is_active: true,
+        main_bonus_type: input.main_bonus_type ?? 'none',
+        main_bonus_multiplier: input.main_bonus_multiplier ?? 1,
         created_at: now,
         updated_at: now,
       };

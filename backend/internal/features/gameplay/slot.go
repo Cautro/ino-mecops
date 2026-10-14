@@ -33,9 +33,8 @@ type slotOutcome struct {
 }
 
 type creatureOption struct {
-	slug     string
-	name     string
-	featured bool
+	slug string
+	name string
 }
 
 func rollSlotSymbols() ([3]string, error) {
@@ -66,6 +65,43 @@ func evaluateSlot(symbols [3]string, bet int64) slotOutcome {
 	return slotOutcome{winType: "miss"}
 }
 
+// rollBestSlot simulates the configured number of independent outcomes and keeps
+// the most valuable result. The multiplier is a server-side bonus, never client input.
+func rollBestSlot(bet int64, attempts int) ([3]string, slotOutcome, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	if attempts > 10 {
+		attempts = 10
+	}
+	var bestSymbols [3]string
+	var bestOutcome slotOutcome
+	for i := 0; i < attempts; i++ {
+		symbols, err := rollSlotSymbols()
+		if err != nil {
+			return [3]string{}, slotOutcome{}, err
+		}
+		outcome := evaluateSlot(symbols, bet)
+		if i == 0 || outcome.payout > bestOutcome.payout {
+			bestSymbols, bestOutcome = symbols, outcome
+		}
+	}
+	return bestSymbols, bestOutcome, nil
+}
+
+func bonusAttempts(bonus mainBonus) int {
+	if bonus.Type != string(MainBonusSlotChance) {
+		return 1
+	}
+	if bonus.Multiplier < 1 {
+		return 1
+	}
+	if bonus.Multiplier > 10 {
+		return 10
+	}
+	return bonus.Multiplier
+}
+
 // Creature-stake rules are intentionally item-based: a miss loses the selected
 // creature, a pair preserves it, a regular triple awards one creature, and a
 // DNA jackpot awards two. Gold is never changed in this mode.
@@ -85,6 +121,10 @@ func creatureStakeRewards(winType string) (loseStake bool, rewardCount int) {
 }
 
 func (s *Store) SpinSlot(ctx context.Context, telegramID int64, input SlotSpinInput) (SlotSpinResult, error) {
+	// Realize accrued passive income before a spin can remove a staked creature.
+	if _, err := s.Overview(ctx, telegramID); err != nil {
+		return SlotSpinResult{}, err
+	}
 	betType := strings.TrimSpace(input.BetType)
 	if betType == "" {
 		betType = "gold" // Backward compatibility with clients that only send {bet}.
@@ -121,12 +161,24 @@ func (s *Store) spinGold(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 		return SlotSpinResult{}, ErrInsufficientGold
 	}
 
-	// The backend owns randomness and payout calculation; the client only supplies the stake.
-	symbols, err := rollSlotSymbols()
+	bonus, err := currentMainBonus(ctx, tx, telegramID)
 	if err != nil {
 		return SlotSpinResult{}, err
 	}
-	outcome := evaluateSlot(symbols, bet)
+	// The main-creature bonus is player-specific. A slot_chance bonus runs N
+	// server-side outcomes and retains the best one; it never changes egg odds.
+	symbols, outcome, err := rollBestSlot(bet, bonusAttempts(bonus))
+	if err != nil {
+		return SlotSpinResult{}, err
+	}
+	bonusApplied := false
+	if bonus.Type == string(MainBonusSlotPayout) && outcome.payout > 0 {
+		outcome.payout *= int64(bonus.Multiplier)
+		outcome.multiplier *= float64(bonus.Multiplier)
+		bonusApplied = bonus.Multiplier > 1
+	} else if bonus.Type == string(MainBonusSlotChance) && bonus.Multiplier > 1 {
+		bonusApplied = true
+	}
 
 	creatureSlug := ""
 	creatureName := ""
@@ -191,17 +243,20 @@ func (s *Store) spinGold(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 	}
 
 	return SlotSpinResult{
-		Symbols:      symbols,
-		BetType:      "gold",
-		Bet:          bet,
-		Payout:       outcome.payout,
-		Net:          outcome.payout - bet,
-		GoldBalance:  balance,
-		WinType:      outcome.winType,
-		Multiplier:   outcome.multiplier,
-		CreatureSlug: creatureSlug,
-		CreatureName: creatureName,
-		Message:      message,
+		Symbols:             symbols,
+		BetType:             "gold",
+		Bet:                 bet,
+		Payout:              outcome.payout,
+		Net:                 outcome.payout - bet,
+		GoldBalance:         balance,
+		WinType:             outcome.winType,
+		Multiplier:          outcome.multiplier,
+		MainBonusType:       bonus.Type,
+		MainBonusMultiplier: bonus.Multiplier,
+		BonusApplied:        bonusApplied,
+		CreatureSlug:        creatureSlug,
+		CreatureName:        creatureName,
+		Message:             message,
 	}, nil
 }
 
@@ -238,11 +293,15 @@ func (s *Store) spinCreature(ctx context.Context, telegramID, creatureID int64) 
 		return SlotSpinResult{}, err
 	}
 
-	symbols, err := rollSlotSymbols()
+	bonus, err := currentMainBonus(ctx, tx, telegramID)
 	if err != nil {
 		return SlotSpinResult{}, err
 	}
-	outcome := evaluateSlot(symbols, 1)
+	symbols, outcome, err := rollBestSlot(1, bonusAttempts(bonus))
+	if err != nil {
+		return SlotSpinResult{}, err
+	}
+	bonusApplied := bonus.Type == string(MainBonusSlotChance) && bonus.Multiplier > 1
 	stakeLost, rewardCount := creatureStakeRewards(outcome.winType)
 	rewards := make([]SlotCreatureReward, 0, rewardCount)
 
@@ -315,22 +374,25 @@ func (s *Store) spinCreature(ctx context.Context, telegramID, creatureID int64) 
 	}
 
 	return SlotSpinResult{
-		Symbols:           symbols,
-		BetType:           "creature",
-		BetCreatureID:     creatureID,
-		BetCreatureSlug:   stakedSlug,
-		BetCreatureName:   stakedName,
-		CreatureStakeLost: stakeLost,
-		CreatureRewards:   rewards,
-		GoldBalance:       balance,
-		WinType:           outcome.winType,
-		Multiplier:        outcome.multiplier,
-		Message:           message,
+		Symbols:             symbols,
+		BetType:             "creature",
+		BetCreatureID:       creatureID,
+		BetCreatureSlug:     stakedSlug,
+		BetCreatureName:     stakedName,
+		CreatureStakeLost:   stakeLost,
+		CreatureRewards:     rewards,
+		GoldBalance:         balance,
+		WinType:             outcome.winType,
+		Multiplier:          outcome.multiplier,
+		MainBonusType:       bonus.Type,
+		MainBonusMultiplier: bonus.Multiplier,
+		BonusApplied:        bonusApplied,
+		Message:             message,
 	}, nil
 }
 
 func activeCreatureOptions(ctx context.Context, tx *sql.Tx) ([]creatureOption, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT slug, name, is_featured FROM creature_species WHERE is_active=true ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT slug, name FROM creature_species WHERE is_active=true ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +401,7 @@ func activeCreatureOptions(ctx context.Context, tx *sql.Tx) ([]creatureOption, e
 	available := make([]creatureOption, 0)
 	for rows.Next() {
 		var creature creatureOption
-		if err := rows.Scan(&creature.slug, &creature.name, &creature.featured); err != nil {
+		if err := rows.Scan(&creature.slug, &creature.name); err != nil {
 			return nil, err
 		}
 		available = append(available, creature)
@@ -354,32 +416,11 @@ func randomCreature(available []creatureOption) (creatureOption, error) {
 	if len(available) == 0 {
 		return creatureOption{}, errors.New("no available creatures")
 	}
-	// The one featured species receives 5 tickets; all other species receive 1.
-	// This chooser is used only for slot rewards, not for egg hatching.
-	totalWeight := int64(0)
-	for _, option := range available {
-		totalWeight += creatureSelectionWeight(option)
-	}
-	pick, err := crand.Int(crand.Reader, big.NewInt(totalWeight))
+	pick, err := crand.Int(crand.Reader, big.NewInt(int64(len(available))))
 	if err != nil {
 		return creatureOption{}, err
 	}
-	remaining := pick.Int64()
-	for _, option := range available {
-		weight := creatureSelectionWeight(option)
-		if remaining < weight {
-			return option, nil
-		}
-		remaining -= weight
-	}
-	return available[len(available)-1], nil
-}
-
-func creatureSelectionWeight(option creatureOption) int64 {
-	if option.featured {
-		return 5
-	}
-	return 1
+	return available[pick.Int64()], nil
 }
 
 func nullIfEmpty(value string) any {

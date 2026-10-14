@@ -1,0 +1,29 @@
+groups:
+  - name: inomecops-api-health
+    rules:
+      - alert: InomecopsBackendDown
+        expr: up{job="inomecops"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Иномекопы API недоступен"
+          description: "Prometheus не может получить /metrics от backend более минуты. Проверь systemd и сетевой доступ до порта 8080."
+
+      - alert: InomecopsServerErrors
+        expr: sum(rate(inomecops_http_errors_total{status=~"5.."}[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "У Inomecops растёт число HTTP 5xx"
+          description: "API возвращает серверные ошибки. Проверь journalctl -u inomecops и логи PostgreSQL."
+
+      - alert: InomecopsHighLatency
+        expr: histogram_quantile(0.95, sum by (le) (rate(inomecops_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая задержка API Inomecops"
+          description: "95-й перцентиль времени ответа превышает 1 секунду в течение 5 минут."

@@ -88,7 +88,7 @@ func (r *PostgresRepository) DeleteAbility(ctx context.Context, id int64) error 
 
 const speciesSelect = `
 SELECT s.id, s.slug, s.name, s.description, s.image_url, s.sell_price_gold, s.rarity, s.passive_gold_per_hour,
-       s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at, s.is_featured
+       s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at, s.is_featured, s.main_bonus_type, s.main_bonus_multiplier
 FROM creature_species s
 JOIN abilities a ON a.id=s.ability_id
 `
@@ -96,7 +96,7 @@ JOIN abilities a ON a.id=s.ability_id
 func scanSpecies(scanner interface{ Scan(...any) error }) (Species, error) {
 	var item Species
 	err := scanner.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.SellPriceGold, &item.Rarity, &item.PassiveGoldPerHour,
-		&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &item.IsFeatured)
+		&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &item.IsFeatured, &item.MainBonusType, &item.MainBonusMultiplier)
 	return item, err
 }
 
@@ -128,6 +128,7 @@ func (r *PostgresRepository) ListSpecies(ctx context.Context, includeArchived bo
 func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTelegramID int64) ([]CollectionSpecies, error) {
 	query := `SELECT s.id, s.slug, s.name, s.description, s.image_url, s.sell_price_gold, s.rarity, s.passive_gold_per_hour,
 		s.health, s.damage, s.crit_chance, s.ability_id, a.name, a.slug, s.is_active, s.created_at, s.updated_at,
+		s.is_featured, s.main_bonus_type, s.main_bonus_multiplier,
 		(EXISTS (SELECT 1 FROM player_discovered_species ds WHERE ds.player_telegram_id = $1 AND ds.species_slug = s.slug)
 		 OR EXISTS (SELECT 1 FROM player_creatures pc WHERE pc.owner_telegram_id = $1 AND pc.species_slug = s.slug)) AS is_discovered
 		FROM creature_species s
@@ -147,7 +148,7 @@ func (r *PostgresRepository) ListCollectionSpecies(ctx context.Context, ownerTel
 		var item Species
 		var discovered bool
 		if err := rows.Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ImageURL, &item.SellPriceGold, &item.Rarity, &item.PassiveGoldPerHour,
-			&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &discovered); err != nil {
+			&item.Health, &item.Damage, &item.CritChance, &item.AbilityID, &item.AbilityName, &item.AbilitySlug, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &item.IsFeatured, &item.MainBonusType, &item.MainBonusMultiplier, &discovered); err != nil {
 			return nil, err
 		}
 		items = append(items, collectionSpecies(item, discovered))
@@ -171,9 +172,9 @@ func (r *PostgresRepository) CreateSpecies(ctx context.Context, input SpeciesInp
 	}
 	var id int64
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO creature_species (slug, name, description, image_url, sell_price_gold, rarity, passive_gold_per_hour, health, damage, crit_chance, ability_id, is_featured)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-		input.Slug, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, input.IsFeatured).Scan(&id)
+		INSERT INTO creature_species (slug, name, description, image_url, sell_price_gold, rarity, passive_gold_per_hour, health, damage, crit_chance, ability_id, is_featured, main_bonus_type, main_bonus_multiplier)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+		input.Slug, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, input.IsFeatured, input.MainBonusType, input.MainBonusMultiplier).Scan(&id)
 	if err != nil {
 		return Species{}, mapDatabaseError(err)
 	}
@@ -197,8 +198,8 @@ func (r *PostgresRepository) UpdateSpecies(ctx context.Context, id int64, input 
 	var updatedID int64
 	err = tx.QueryRowContext(ctx, `
 		UPDATE creature_species SET name=$2, description=$3, image_url=$4, sell_price_gold=$5, rarity=$6, passive_gold_per_hour=$7,
-			health=$8, damage=$9, crit_chance=$10, ability_id=$11, is_featured=$12, updated_at=now()
-		WHERE id=$1 RETURNING id`, id, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, input.IsFeatured).Scan(&updatedID)
+			health=$8, damage=$9, crit_chance=$10, ability_id=$11, is_featured=$12, main_bonus_type=$13, main_bonus_multiplier=$14, updated_at=now()
+		WHERE id=$1 RETURNING id`, id, input.Name, input.Description, input.ImageURL, input.SellPriceGold, input.Rarity, input.PassiveGoldPerHour, input.Health, input.Damage, input.CritChance, input.AbilityID, input.IsFeatured, input.MainBonusType, input.MainBonusMultiplier).Scan(&updatedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Species{}, ErrNotFound
 	}

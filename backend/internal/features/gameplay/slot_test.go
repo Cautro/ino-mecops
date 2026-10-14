@@ -61,13 +61,42 @@ func TestCreatureStakeOutcomeRules(t *testing.T) {
 	}
 }
 
-func TestFeaturedCreatureGetsFiveTimesSelectionWeight(t *testing.T) {
-	featured := creatureSelectionWeight(creatureOption{slug: "main", featured: true})
-	normal := creatureSelectionWeight(creatureOption{slug: "other", featured: false})
-	if featured != 5 {
-		t.Fatalf("featured weight = %d; want 5", featured)
+func TestMainSlotBonusControlsServerSideAttempts(t *testing.T) {
+	cases := []struct {
+		name  string
+		bonus mainBonus
+		want  int
+	}{
+		{name: "no bonus", bonus: mainBonus{Type: string(MainBonusNone), Multiplier: 1}, want: 1},
+		{name: "payout bonus does not increase attempts", bonus: mainBonus{Type: string(MainBonusSlotPayout), Multiplier: 5}, want: 1},
+		{name: "chance bonus uses configured attempts", bonus: mainBonus{Type: string(MainBonusSlotChance), Multiplier: 5}, want: 5},
+		{name: "attempts are capped", bonus: mainBonus{Type: string(MainBonusSlotChance), Multiplier: 50}, want: 10},
+		{name: "invalid multiplier becomes one", bonus: mainBonus{Type: string(MainBonusSlotChance), Multiplier: 0}, want: 1},
 	}
-	if normal != 1 {
-		t.Fatalf("normal weight = %d; want 1", normal)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bonusAttempts(tc.bonus); got != tc.want {
+				t.Fatalf("bonusAttempts(%+v) = %d; want %d", tc.bonus, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRollBestSlotReturnsValidThreeSymbols(t *testing.T) {
+	symbols, _, err := rollBestSlot(100, 3)
+	if err != nil {
+		t.Fatalf("rollBestSlot returned error: %v", err)
+	}
+	for i, symbol := range symbols {
+		found := false
+		for _, allowed := range slotSymbols {
+			if symbol == allowed {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("symbols[%d]=%q is not a slot symbol", i, symbol)
+		}
 	}
 }
