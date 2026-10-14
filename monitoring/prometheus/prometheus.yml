@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: inomecops
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: inomecops-api

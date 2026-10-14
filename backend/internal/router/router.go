@@ -14,6 +14,7 @@ import (
 	"github.com/cautro/inomecops/backend/internal/features/gameplay"
 	"github.com/cautro/inomecops/backend/internal/features/shop"
 	"github.com/cautro/inomecops/backend/internal/features/subscription"
+	appmetrics "github.com/cautro/inomecops/backend/internal/metrics"
 	"github.com/cautro/inomecops/backend/internal/services"
 )
 
@@ -32,6 +33,8 @@ type Dependencies struct {
 
 func New(deps Dependencies) http.Handler {
 	mux := http.NewServeMux()
+	metricsRegistry := appmetrics.New()
+	mux.Handle("GET /metrics", metricsRegistry.Handler())
 	protected := func(handler http.Handler) http.Handler {
 		return deps.Auth.Middleware(handler)
 	}
@@ -80,7 +83,7 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/catalog/creatures", protected(http.HandlerFunc(deps.Catalog.ListPublicSpecies)))
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(deps.UploadDir))))
 
-	return requestLogger(mux, deps.Log)
+	return metricsRegistry.Middleware(requestLogger(mux, deps.Log))
 }
 
 func requestLogger(next http.Handler, logger *log.Logger) http.Handler {

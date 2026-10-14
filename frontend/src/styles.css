@@ -3799,3 +3799,76 @@ button.species-card--catalog:focus-visible {
 
 .admin-inline-toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-strong); font-size: 11px; white-space: nowrap; }
 .admin-inline-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* ==================== October update: contained egg art + direct wager input ==================== */
+.egg-card {
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+.egg-card-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 132px;
+  min-height: 0;
+  max-height: 132px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.egg-card-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+.egg-card-copy { min-width: 0; overflow-wrap: anywhere; }
+.egg-card-copy h3, .egg-card-copy p { overflow-wrap: anywhere; }
+.egg-card-buy { min-width: 0; }
+.slot-bet-stepper { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+.slot-bet-stepper .slot-bet-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--gold);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 750;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: none;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.slot-bet-stepper .slot-bet-input:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.slot-bet-stepper .slot-bet-input::-webkit-outer-spin-button,
+.slot-bet-stepper .slot-bet-input::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
+.slot-bet-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); flex-wrap: initial; }
+.slot-bet-presets button { min-height: 30px; white-space: nowrap; font-size: 11px; }
+@media (max-width: 760px) {
+  .egg-card { grid-template-columns: 84px minmax(0, 1fr); padding: 12px; gap: 10px; }
+  .egg-card-art { height: 118px; max-height: 118px; min-height: 0; }
+  .egg-card-buy { grid-column: 1 / -1; }
+}
+@media (max-width: 390px) {
+  .egg-card { grid-template-columns: 74px minmax(0, 1fr); gap: 9px; }
+  .egg-card-art { height: 108px; max-height: 108px; }
+  .egg-card-copy h3 { font-size: 14px; }
+  .egg-card-copy p { font-size: 11px; }
+  .slot-bet-stepper { grid-template-columns: 38px minmax(0, 1fr) 38px; }
+  .slot-bet-presets { gap: 5px; }
+  .slot-bet-presets button { padding: 6px 2px; font-size: 10px; }
+}
+.owned-egg-icon { overflow: hidden; }
+.owned-egg-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }

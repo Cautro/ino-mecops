@@ -125,6 +125,7 @@ export function App() {
   const [redeemResult, setRedeemResult] = useState<RedeemResult | null>(null);
 
   const [slotBet, setSlotBet] = useState(50);
+  const [slotBetInput, setSlotBetInput] = useState('50');
   const [slotBetType, setSlotBetType] = useState<'gold' | 'creature'>('gold');
   const [slotCreatureID, setSlotCreatureID] = useState<number | ''>('');
   const [slotReels, setSlotReels] = useState<[string, string, string]>(['🍒', '💎', '🧬']);
@@ -349,6 +350,10 @@ export function App() {
 
   const playSlot = async () => {
     if (slotRolling) return;
+    if (slotBetType === 'gold' && (!Number.isInteger(slotBet) || slotBet < 10 || slotBet > 10000)) {
+      setNotice({ kind: 'error', title: 'Некорректная ставка', message: 'Введи целое число от 10 до 10 000 золота.' });
+      return;
+    }
     if (slotBetType === 'gold' && (!player || player.gold < slotBet)) {
       setNotice({ kind: 'error', title: 'Не хватает золота', message: 'Уменьши ставку или активируй карточку, чтобы получить золото.' });
       return;
@@ -648,14 +653,36 @@ export function App() {
                       <>
                         <div className="slot-bet-label"><span>ТВОЯ СТАВКА</span><small>от 10 до 10 000 золота</small></div>
                         <div className="slot-bet-stepper">
-                          <button type="button" aria-label="Уменьшить ставку" disabled={slotRolling || slotBet <= 10} onClick={() => setSlotBet((value) => Math.max(10, value - 10))}>−</button>
-                          <strong>{formatNumber(slotBet)}</strong>
-                          <button type="button" aria-label="Увеличить ставку" disabled={slotRolling || slotBet >= 10000} onClick={() => setSlotBet((value) => Math.min(10000, value + 10))}>+</button>
+                          <button type="button" aria-label="Уменьшить ставку на 10" disabled={slotRolling || slotBet <= 10} onClick={() => { const next = Math.max(10, slotBet - 10); setSlotBet(next); setSlotBetInput(String(next)); }}>−</button>
+                          <input
+                            className="slot-bet-input"
+                            type="number"
+                            inputMode="numeric"
+                            min={10}
+                            max={10000}
+                            step={1}
+                            aria-label="Ставка в золоте"
+                            value={slotBetInput}
+                            disabled={slotRolling}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              setSlotBetInput(raw);
+                              if (raw !== '' && /^\d+$/.test(raw)) setSlotBet(Number(raw));
+                            }}
+                            onBlur={() => {
+                              const parsed = Number(slotBetInput);
+                              const next = Number.isFinite(parsed) ? Math.max(10, Math.min(10000, Math.trunc(parsed || 10))) : 10;
+                              setSlotBet(next);
+                              setSlotBetInput(String(next));
+                            }}
+                            onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                          />
+                          <button type="button" aria-label="Увеличить ставку на 10" disabled={slotRolling || slotBet >= 10000} onClick={() => { const next = Math.min(10000, slotBet + 10); setSlotBet(next); setSlotBetInput(String(next)); }}>+</button>
                         </div>
                         <div className="slot-bet-presets">
-                          {[10, 50, 100, 250, 500].map((value) => (
-                            <button type="button" key={value} className={slotBet === value ? 'is-selected' : ''} disabled={slotRolling} onClick={() => setSlotBet(value)}>
-                              {value}
+                          {[10, 50, 100, 500, 1000, 2500, 5000, 10000].map((value) => (
+                            <button type="button" key={value} className={slotBet === value ? 'is-selected' : ''} disabled={slotRolling} onClick={() => { setSlotBet(value); setSlotBetInput(String(value)); }}>
+                              {formatNumber(value)}
                             </button>
                           ))}
                         </div>
@@ -687,7 +714,7 @@ export function App() {
                     className="button button--primary slot-spin-button"
                     type="button"
                     onClick={() => void playSlot()}
-                    disabled={slotRolling || (slotBetType === 'gold' ? (player?.gold ?? 0) < slotBet : !selectedSlotCreature)}
+                    disabled={slotRolling || (slotBetType === 'gold' ? (slotBet < 10 || slotBet > 10000 || !Number.isInteger(slotBet) || (player?.gold ?? 0) < slotBet) : !selectedSlotCreature)}
                   >
                     {slotRolling
                       ? 'КРУТИМ…'
