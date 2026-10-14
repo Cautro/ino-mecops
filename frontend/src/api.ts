@@ -567,9 +567,9 @@ export const api = {
 
 // ==================== Обработчик Демо-режима ====================
 
-function creatureNameForDemo(slug: string): string {
-  return demoSpecies.find((species) => species.slug === slug)?.name ?? slug.replaceAll('-', ' ');
-}
+// function creatureNameForDemo(slug: string): string {
+//   return demoSpecies.find((species) => species.slug === slug)?.name ?? slug.replaceAll('-', ' ');
+// }
 
 async function demoRequest<T>(path: string, options: RequestOptions): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, 100));
@@ -659,7 +659,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   }
 
   if (path === '/api/v1/shop/lootboxes/buy' && options.method === 'POST') {
-    const payload = options.body as { rarity: EggKind };
+    // const payload = options.body as { rarity: EggKind };
     const product = demoEggCatalog.find((item) => item.rarity === 'mystery');
     const offer = demoSpecies.some((species) => species.is_active);
     if (!product || !product.is_active || !offer) throw new APIError('Контейнер сейчас недоступен.', 409, 'lootbox_unavailable');
