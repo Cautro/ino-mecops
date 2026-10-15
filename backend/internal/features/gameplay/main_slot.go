@@ -8,7 +8,7 @@ import (
 
 type mainBonus struct {
 	Type       string
-	Multiplier float64
+	Multiplier int
 	CreatureID int64
 	Name       string
 	SelectedAt sql.NullTime

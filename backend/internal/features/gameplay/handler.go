@@ -29,6 +29,37 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	services.WriteJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) SpinSlot(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.IdentityFromContext(r.Context())
+	if !ok {
+		services.WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация.")
+		return
+	}
+	var input SlotSpinInput
+	if err := services.DecodeJSON(w, r, &input); err != nil {
+		services.WriteError(w, http.StatusBadRequest, "bad_request", "Укажи ставку от 10 до 10000 золота.")
+		return
+	}
+	result, err := h.store.SpinSlot(r.Context(), user.ID, input)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			services.WriteError(w, http.StatusBadRequest, "invalid_bet", "Для ставки золотом укажи от 10 до 10000, либо выбери своего иномекона.")
+		case errors.Is(err, ErrInsufficientGold):
+			services.WriteError(w, http.StatusConflict, "insufficient_gold", "Не хватает золота для этой ставки.")
+		case errors.Is(err, ErrCreatureNotOwned):
+			services.WriteError(w, http.StatusConflict, "creature_not_owned", "Этот иномекон уже недоступен для ставки. Обнови коллекцию и выбери другого.")
+		case errors.Is(err, ErrNotFound), errors.Is(err, sql.ErrNoRows):
+			services.WriteError(w, http.StatusNotFound, "player_not_found", "Игровой профиль не найден.")
+		default:
+			log.Printf("SpinSlot failed: player=%d bet_type=%q bet=%d creature_id=%d err=%v", user.ID, input.BetType, input.Bet, input.CreatureID, err)
+			services.WriteError(w, http.StatusInternalServerError, "slot_failed", "Не удалось прокрутить барабан. Попробуй ещё раз.")
+		}
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) MainSlot(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.IdentityFromContext(r.Context())
 	if !ok {

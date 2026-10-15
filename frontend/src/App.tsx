@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, isDemoMode } from './api';
+import { APIError, api, isDemoMode } from './api';
 import AdminPanel from './AdminPanel';
-import type { CollectionSpecies, Creature, OpenLootboxResult, LeaderboardData, MainBonusType, MainSlotState, Player, RedeemResult, Rarity, ShopData, SubscriptionClaimResult, SubscriptionStatus } from './api';
+import type { CollectionSpecies, Creature, EggKind, HatchEggResult, LeaderboardData, MainBonusType, MainSlotState, Player, RedeemResult, Rarity, ShopData, SlotSpinRequest, SlotSpinResult, SubscriptionClaimResult, SubscriptionStatus } from './api';
 
 // ==================== Типы и константы ====================
 
@@ -20,7 +20,7 @@ const RARITIES: { value: Rarity; label: string }[] = [
 // ==================== Вспомогательные функции ====================
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(value);
+  return new Intl.NumberFormat('ru-RU').format(value);
 }
 
 function formatDate(value?: string): string {
@@ -38,10 +38,10 @@ function creatureName(slug: string): string {
 
 function mainBonusLabel(type?: MainBonusType, multiplier = 1): string {
   switch (type) {
-    case 'lootbox_chance': return `Улучшенный шанс редких иномеконов: вес всех редкостей выше обычной увеличен в ${multiplier} раза.`;
-    case 'lootbox_gold': return `Дополнительное золото за открытие контейнера: до ${formatNumber(Math.floor((multiplier - 1) * 10))}% от цены контейнера.`;
+    case 'slot_chance': return `Шанс барабана ×${multiplier}: сервер выберет лучший результат из ${multiplier} прокруток.`;
+    case 'slot_payout': return `Выплата барабана ×${multiplier}: денежный выигрыш увеличивается в ${multiplier} раз.`;
     case 'passive_income': return `Пассивный доход ×${multiplier}: общий доход всех иномеконов увеличивается в ${multiplier} раз.`;
-    default: return 'У этого иномекона нет бонуса основного иномекона.';
+    default: return 'У этого иномекона нет бонуса основного слота.';
   }
 }
 
@@ -128,7 +128,7 @@ export function App() {
   const [tutorialStep, setTutorialStep] = useState(0);
   const [shopTutorialStep, setShopTutorialStep] = useState<'buy' | 'hatch' | null>(null);
   const [shopBusy, setShopBusy] = useState(false);
-  const [lastHatch, setLastHatch] = useState<OpenLootboxResult | null>(null);
+  const [lastHatch, setLastHatch] = useState<HatchEggResult | null>(null);
   const [confirmSellID, setConfirmSellID] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -138,6 +138,13 @@ export function App() {
   const [redeeming, setRedeeming] = useState(false);
   const [redeemResult, setRedeemResult] = useState<RedeemResult | null>(null);
 
+  const [slotBet, setSlotBet] = useState(50);
+  const [slotBetInput, setSlotBetInput] = useState('50');
+  const [slotBetType, setSlotBetType] = useState<'gold' | 'creature'>('gold');
+  const [slotCreatureID, setSlotCreatureID] = useState<number | ''>('');
+  const [slotReels, setSlotReels] = useState<[string, string, string]>(['🍒', '💎', '🧬']);
+  const [slotRolling, setSlotRolling] = useState(false);
+  const [slotResult, setSlotResult] = useState<SlotSpinResult | null>(null);
   const [selectedSpeciesID, setSelectedSpeciesID] = useState<number | null>(null);
   const [mainSlotData, setMainSlotData] = useState<MainSlotState | null>(null);
   const [mainSlotChoiceID, setMainSlotChoiceID] = useState<number | ''>('');
@@ -174,6 +181,11 @@ export function App() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [selectedSpecies]);
 
+  const selectedSlotCreature = useMemo(
+    () => (slotCreatureID === '' ? undefined : ownedCreatures.find((item) => item.id === slotCreatureID)),
+    [ownedCreatures, slotCreatureID]
+  );
+
   const refreshMainSlot = useCallback(async () => {
     const fresh = await api.mainSlot(initData);
     setMainSlotData(fresh);
@@ -207,7 +219,7 @@ export function App() {
       const [playerResponse, creatureResponse] = await Promise.all([api.me(initData), api.creatures(initData)]);
       setPlayer(playerResponse);
       setOwnedCreatures(creatureResponse.items ?? []);
-      try { await refreshMainSlot(); } catch (error) { setMainSlotData(null); setNotice({ kind: 'error', title: 'Основной иномекон недоступен', message: errorMessage(error) }); }
+      try { await refreshMainSlot(); } catch (error) { setMainSlotData(null); setNotice({ kind: 'error', title: 'Основной слот недоступен', message: errorMessage(error) }); }
       try { await refreshLeaderboards(); } catch { /* Leaderboard page displays a retry action. */ }
       if (!tutorialAutoOpened.current) {
         const tutorialKey = `inomecops:onboarding-seen:${playerResponse.telegram_id}`;
@@ -293,6 +305,12 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [canOpen, initData]);
 
+  useEffect(() => {
+    if (slotCreatureID !== '' && !ownedCreatures.some((item) => item.id === slotCreatureID)) {
+      setSlotCreatureID(ownedCreatures[0]?.id ?? '');
+    }
+  }, [ownedCreatures, slotCreatureID]);
+
   const redeemCode = useCallback(
     async (rawCode: string) => {
       const normalized = rawCode.trim().toUpperCase();
@@ -355,7 +373,7 @@ export function App() {
 
   const saveMainSlot = async () => {
     if (mainSlotChoiceID === '') {
-      setNotice({ kind: 'error', title: 'Выбери иномекона', message: 'Чтобы установить основного иномекона, сначала выбери существо из своей коллекции.' });
+      setNotice({ kind: 'error', title: 'Выбери иномекона', message: 'Чтобы установить основной слот, сначала выбери принадлежащего тебе иномекона.' });
       return;
     }
     setMainSlotBusy(true);
@@ -383,7 +401,7 @@ export function App() {
       setMainSlotData(state);
       setMainSlotChoiceID('');
       setPlayer(await api.me(initData));
-      setNotice({ kind: 'success', title: 'Основной иномекон снят', message: 'Дополнительный бонус больше не применяется.' });
+      setNotice({ kind: 'success', title: 'Основной слот освобождён', message: 'Дополнительный бонус больше не применяется.' });
       void refreshLeaderboards().catch(() => undefined);
     } catch (error) {
       setNotice({ kind: 'error', title: 'Не удалось освободить слот', message: errorMessage(error) });
@@ -442,6 +460,76 @@ export function App() {
     }
   };
 
+  const playSlot = async () => {
+    if (slotRolling) return;
+    if (slotBetType === 'gold' && (!Number.isInteger(slotBet) || slotBet < 10 || slotBet > 10000)) {
+      setNotice({ kind: 'error', title: 'Некорректная ставка', message: 'Введи целое число от 10 до 10 000 золота.' });
+      return;
+    }
+    if (slotBetType === 'gold' && (!player || player.gold < slotBet)) {
+      setNotice({ kind: 'error', title: 'Не хватает золота', message: 'Уменьши ставку или активируй карточку, чтобы получить золото.' });
+      return;
+    }
+    if (slotBetType === 'creature' && !selectedSlotCreature) {
+      setNotice({ kind: 'error', title: 'Выбери иномекона', message: 'Для этой ставки нужен иномекон из твоей коллекции.' });
+      return;
+    }
+
+    const request: SlotSpinRequest = slotBetType === 'gold'
+      ? { bet_type: 'gold', bet: slotBet }
+      : { bet_type: 'creature', creature_id: selectedSlotCreature!.id };
+
+    setSlotRolling(true);
+    setSlotResult(null);
+    const symbols = ['🍒', '🍋', '💎', '⭐', '🧬'];
+    const animationTimer = window.setInterval(() => {
+      setSlotReels([
+        symbols[Math.floor(Math.random() * symbols.length)],
+        symbols[Math.floor(Math.random() * symbols.length)],
+        symbols[Math.floor(Math.random() * symbols.length)],
+      ]);
+    }, 75);
+
+    try {
+      const result = await api.spinSlot(initData, request);
+      await new Promise((resolve) => window.setTimeout(resolve, 1050));
+      window.clearInterval(animationTimer);
+      setSlotReels(result.symbols);
+      setSlotResult(result);
+      const creatureDelta = (result.creature_slug ? 1 : 0) + (result.creature_rewards?.length ?? 0) - (result.creature_stake_lost ? 1 : 0);
+      setPlayer((previous) =>
+        previous
+          ? {
+              ...previous,
+              gold: result.gold_balance,
+              owned_creature_count: Math.max(0, (previous.owned_creature_count ?? ownedCreatures.length) + creatureDelta),
+            }
+          : previous
+      );
+      // Refresh inventory after every spin: an item stake may be lost or award new creatures.
+      void Promise.all([api.me(initData), api.creatures(initData), api.collectionCatalog(initData)])
+        .then(([freshPlayer, freshCreatures, freshCatalogue]) => {
+          setPlayer(freshPlayer);
+          setOwnedCreatures(freshCreatures.items ?? []);
+          setSpecies(freshCatalogue.items ?? []);
+        })
+        .catch(() => undefined);
+      void refreshMainSlot().catch(() => undefined);
+      if (page === 'leaderboards') void refreshLeaderboards().catch(() => undefined);
+      telegram?.HapticFeedback?.notificationOccurred(result.win_type === 'miss' ? 'warning' : 'success');
+    } catch (error) {
+      window.clearInterval(animationTimer);
+      const message = error instanceof APIError && error.code === 'slot_failed'
+        ? 'Сервер не смог сохранить результат. Проверь, что миграции backend/migrations/005_slot_machine.sql и 006_slot_creature_stakes.sql применены к базе PostgreSQL backend. Если они применены, проверь журнал backend — там будет исходная ошибка. Незавершённая операция откатывается, поэтому баланс и коллекция не меняются.'
+        : errorMessage(error);
+      setNotice({ kind: 'error', title: 'Не удалось завершить прокрутку', message });
+      telegram?.HapticFeedback?.notificationOccurred('error');
+    } finally {
+      window.clearInterval(animationTimer);
+      setSlotRolling(false);
+    }
+  };
+
   const refreshAfterShopAction = async () => {
     const [freshPlayer, freshCreatures, freshCatalog, freshShop] = await Promise.all([
       api.me(initData), api.creatures(initData), api.collectionCatalog(initData), api.shop(initData),
@@ -454,40 +542,42 @@ export function App() {
     if (page === 'leaderboards') await refreshLeaderboards().catch(() => undefined);
   };
 
-  const buyLootbox = async () => {
+  const buyEgg = async (rarity: EggKind) => {
     if (shopBusy) return;
     setShopBusy(true);
     setNotice(null);
     try {
-      const result = await api.buyLootbox(initData);
+      const result = await api.buyEgg(initData, rarity);
       await refreshAfterShopAction();
-      const label = shopData?.lootboxes[0]?.label ?? 'Коллекционный контейнер';
-      setNotice({ kind: 'success', title: 'Контейнер добавлен', message: `«${label}» добавлен в инвентарь. Открой его в разделе «Мои контейнеры», чтобы получить нового иномекона. Списано ${formatNumber(result.lootbox.price_gold)} золота.` });
-      setShopTutorialStep('hatch');
+      setNotice({ kind: 'success', title: 'Яйцо куплено', message: `«${shopData?.egg_offers.find((item) => item.rarity === rarity)?.label ?? (RARITIES.find((item) => item.value === rarity)?.label ?? 'Загадочное')}» добавлено в рюкзак. Теперь пролистай до «Яйца в рюкзаке» и нажми «Вылупить». Списано ${formatNumber(result.egg.price_gold)} золота.` });
+      if (shopTutorialStep === 'buy') setShopTutorialStep('hatch');
       telegram?.HapticFeedback?.notificationOccurred('success');
     } catch (error) {
-      setNotice({ kind: 'error', title: 'Не удалось купить контейнер', message: errorMessage(error) });
+      setNotice({ kind: 'error', title: 'Не удалось купить яйцо', message: errorMessage(error) });
       telegram?.HapticFeedback?.notificationOccurred('error');
-    } finally { setShopBusy(false); }
+    } finally {
+      setShopBusy(false);
+    }
   };
 
-  const openLootbox = async (lootboxID: number) => {
+  const hatchEgg = async (eggID: number) => {
     if (shopBusy) return;
     setShopBusy(true);
     setNotice(null);
     try {
-      const result = await api.openLootbox(initData, lootboxID);
+      const result = await api.hatchEgg(initData, eggID);
       setLastHatch(result);
       setConfirmSellID(null);
       await refreshAfterShopAction();
-      const bonusText = result.gold_bonus > 0 ? ` Дополнительно начислено +${formatNumber(result.gold_bonus)} золота за бонус основного иномекона.` : '';
-      setNotice({ kind: 'success', title: 'Новый иномекон!', message: `Ты получил «${result.name}» (${RARITIES.find((item) => item.value === result.rarity)?.label ?? result.rarity}). Он добавлен в коллекцию и начинает приносить пассивный доход.${bonusText}` });
-      setShopTutorialStep(null);
+      setNotice({ kind: 'success', title: 'Яйцо вылупилось!', message: `Ты получил иномекона «${result.name}». Он добавлен в коллекцию и теперь участвует в пассивном доходе. Его текущую сумму можно увидеть на главной странице.` });
+      if (shopTutorialStep === 'hatch') setShopTutorialStep(null);
       telegram?.HapticFeedback?.notificationOccurred('success');
     } catch (error) {
-      setNotice({ kind: 'error', title: 'Не удалось открыть контейнер', message: errorMessage(error) });
+      setNotice({ kind: 'error', title: 'Не удалось вылупить яйцо', message: errorMessage(error) });
       telegram?.HapticFeedback?.notificationOccurred('error');
-    } finally { setShopBusy(false); }
+    } finally {
+      setShopBusy(false);
+    }
   };
 
   const sellCreature = async (creatureID: number) => {
@@ -555,7 +645,7 @@ export function App() {
         </button>
         <nav className="main-nav" aria-label="Основная навигация">
           <button className={page === 'home' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('home')}>
-            Контейнеры
+            Главная
           </button>
           <button
             className={page === 'collection' ? 'nav-item is-active' : 'nav-item'}
@@ -564,7 +654,7 @@ export function App() {
             Коллекция <span className="nav-count">{ownedCreatures.length}</span>
           </button>
           <button className={page === 'shop' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('shop')}>
-            Обмен
+            Магазин <span className="nav-count">{shopData?.eggs.length ?? 0}</span>
           </button>
           <button className={page === 'leaderboards' ? 'nav-item is-active' : 'nav-item'} onClick={() => showPage('leaderboards')}>Лидерборд</button>
           <button className="nav-item tutorial-nav-item" onClick={openTutorial}>Как играть</button>
@@ -585,9 +675,9 @@ export function App() {
           <>
             <section className="welcome-row">
               <div>
-                <p className="eyebrow">КОЛЛЕКЦИОННЫЕ КОНТЕЙНЕРЫ</p>
+                <p className="eyebrow">ИГРОВОЙ БАРАБАН · СОБИРАЙ ИНОМЕКОНОВ</p>
                 <h1>Привет, {displayName.split(' ')[0]}.</h1>
-                <p className="page-lead">Открывай контейнеры, находи новых иномеконов и собирай свою коллекцию.</p>
+                <p className="page-lead">Крути барабан, забирай золото и выбивай новых иномеконов.</p>
               </div>
               <div className="balance-card">
                 <span>ТВОЙ БАЛАНС</span>
@@ -604,42 +694,192 @@ export function App() {
               <div className="main-slot-copy">
                 <p className="eyebrow">ТВОЙ ПЕРСОНАЛЬНЫЙ БОНУС</p>
                 <h2>Основной иномекон</h2>
-                <p>Выбери одного из своих иномеконов. Его бонус будет действовать, пока он установлен в слот, и отображается в характеристиках вида. Ты можешь менять его в любое время.</p>
+                <p>Выбери одного из своих иномеконов. Его бонус будет действовать, пока он установлен в слот. Ты можешь менять его в любое время.</p>
                 {mainSlotData?.selected ? (
                   <div className="main-slot-active">
                     <ImagePreview src={mainSlotData.selected.image_url} name={mainSlotData.selected.name} />
                     <div><strong>{mainSlotData.selected.name}</strong><span>{RARITIES.find((item) => item.value === mainSlotData.selected?.rarity)?.label ?? mainSlotData.selected.rarity}</span><small>{mainBonusLabel(mainSlotData.selected.bonus_type, mainSlotData.selected.bonus_multiplier)}</small></div>
                   </div>
-                ) : <div className="main-slot-empty"><span>◇</span><div><strong>Основной иномекон не выбран</strong><small>Выбери иномекона из списка, чтобы активировать его бонус.</small></div></div>}
+                ) : <div className="main-slot-empty"><span>◇</span><div><strong>Слот пока пуст</strong><small>Выбери иномекона ниже, чтобы активировать его бонус.</small></div></div>}
               </div>
               <div className="main-slot-actions">
                 <label className="field"><span className="field-label">Иномекон из коллекции</span><select value={mainSlotChoiceID} disabled={mainSlotBusy || !(mainSlotData?.options.length)} onChange={(event) => setMainSlotChoiceID(event.target.value ? Number(event.target.value) : '')}><option value="">Выбрать иномекона…</option>{(mainSlotData?.options ?? []).map((item) => <option key={item.creature_id} value={item.creature_id}>{item.name} · {RARITIES.find((rarity) => rarity.value === item.rarity)?.label ?? item.rarity}</option>)}</select></label>
                 <div className="main-slot-buttons"><button className="button button--primary" type="button" disabled={mainSlotBusy || mainSlotChoiceID === '' || mainSlotChoiceID === mainSlotData?.selected_creature_id} onClick={() => void saveMainSlot()}>{mainSlotBusy ? 'Сохраняем…' : 'Установить основным'}</button><button className="button button--secondary" type="button" disabled={mainSlotBusy || !mainSlotData?.selected} onClick={() => void clearMainSlot()}>Освободить слот</button></div>
-                {mainSlotData?.options.length === 0 && <small className="main-slot-no-options">Сначала открой контейнер и получи иномекона — тогда появится первый кандидат для слота.</small>}
+                {mainSlotData?.options.length === 0 && <small className="main-slot-no-options">Сначала получи яйцо в магазине и вылупи его — тогда появится первый кандидат для слота.</small>}
               </div>
             </section>
 
-            <section className="lootbox-layout" aria-label="Коллекционные контейнеры">
-              <article className="surface lootbox-feature-card">
-                <div className="lootbox-feature-art">{shopData?.lootboxes[0]?.image_url ? <img src={shopData.lootboxes[0].image_url} alt="" /> : <span>◇</span>}</div>
-                <div className="lootbox-feature-copy">
-                  <p className="eyebrow">КОЛЛЕКЦИЯ · НАХОДКИ</p>
-                  <h2>{shopData?.lootboxes[0]?.label ?? 'Коллекционный контейнер'}</h2>
-                  <p>{shopData?.lootboxes[0]?.description ?? 'Каждый контейнер содержит одного нового или уже знакомого иномекона. Редкость определяется по открытым шансам.'}</p>
-                  {shopData?.lootboxes[0] && <div className="lootbox-odds"><strong>Вероятности редкости</strong><div>{RARITIES.map((rarity) => <span key={rarity.value}><em>{rarity.label}</em><b>{(shopData.lootboxes[0].rarity_chances?.[rarity.value] ?? 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%</b></span>)}</div></div>}
-                  <div className="lootbox-buy-row"><strong>{formatNumber(shopData?.lootboxes[0]?.price_gold ?? 1800)} <small>золота</small></strong><button className="button button--primary" type="button" disabled={shopBusy || !shopData?.lootboxes[0]?.available || (player?.gold ?? 0) < (shopData?.lootboxes[0]?.price_gold ?? 0)} onClick={() => void buyLootbox()}>{shopBusy ? 'Подожди…' : !shopData?.lootboxes[0]?.available ? 'Временно недоступен' : (player?.gold ?? 0) < (shopData?.lootboxes[0]?.price_gold ?? 0) ? 'Не хватает золота' : 'Получить контейнер'}</button></div>
-                  <small className="lootbox-hint">Контейнер всегда выдаёт иномекона. Никаких ставок и потери предметов — шансы показаны заранее.</small>
+            <section className="slot-layout" aria-label="Барабан удачи">
+              <article className="surface slot-machine">
+                <div className="slot-machine-heading">
+                  <div>
+                    <p className="eyebrow">INOME · ИГРОВОЙ БАРАБАН</p>
+                    <h2>Барабан удачи</h2>
+                    <p>Выбирай ставку золотом или иномеконом. Три 🧬 — джекпот с дополнительной наградой.</p>
+                  </div>
+                  <div className="slot-mini-balance">
+                    <span>ТВОЁ ЗОЛОТО</span>
+                    <strong>{formatNumber(player?.gold ?? 0)}</strong>
+                  </div>
+                </div>
+
+                <div className={`slot-reels${slotRolling ? ' is-rolling' : ''}`} aria-label="Результат барабана" aria-live="polite">
+                  {slotReels.map((symbol, index) => (
+                    <div className="slot-reel" key={index}>
+                      <span>{symbol}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className={`slot-result${slotResult ? ` slot-result--${slotResult.win_type}` : ''}`} aria-live="polite">
+                  {slotRolling ? (
+                    <><span className="slot-result-icon">✦</span><span>Барабаны крутятся…</span></>
+                  ) : slotResult ? (
+                    <>
+                      <span className="slot-result-icon">{slotResult.bet_type === 'creature' ? (slotResult.creature_stake_lost ? '↻' : slotResult.creature_rewards?.length ? '✦' : '✓') : slotResult.net > 0 ? '✦' : '↻'}</span>
+                      <div className="slot-result-copy">
+                        <strong className={slotResult.bet_type === 'gold' ? (slotResult.payout > 0 ? 'slot-payout-positive' : 'slot-payout-negative') : ''}>
+                          {slotResult.bet_type === 'gold'
+                            ? slotResult.payout > 0 ? `+${formatNumber(slotResult.payout)} золота` : `−${formatNumber(slotResult.bet)} золота`
+                            : slotResult.message}
+                        </strong>
+                        {slotResult.bet_type === 'creature' ? (
+                          <span>
+                            {slotResult.message} Ставка: {slotResult.bet_creature_name ?? 'иномекон'} ·{' '}
+                            <b className={slotResult.creature_stake_lost ? 'slot-net-negative' : 'slot-net-positive'}>
+                              {slotResult.creature_stake_lost ? 'потерян' : 'сохранён'}
+                            </b>
+                            {!!slotResult.creature_rewards?.length && ` · Получено: ${slotResult.creature_rewards.map((item) => item.name).join(', ')}`}
+                          </span>
+                        ) : (
+                          <span>
+                            {slotResult.message}{' '}
+                            {slotResult.payout > 0
+                              ? `На баланс начислено +${formatNumber(slotResult.payout)} золота. Ставка ${formatNumber(slotResult.bet)} золота была списана до вращения, чистый итог раунда: ${slotResult.net > 0 ? '+' : ''}${formatNumber(slotResult.net)} золота.`
+                              : `Ставка ${formatNumber(slotResult.bet)} золота списана до вращения — выплата не начислена.`}
+                          </span>
+                        )}
+                        {slotResult.creature_slug && <small>Новый иномекон добавлен в твою коллекцию.</small>}
+                      </div>
+                    </>
+                  ) : (
+                    <><span className="slot-result-icon">✦</span><span>Пусть удача будет на твоей стороне.</span></>
+                  )}
+                </div>
+
+                <div className="slot-controls">
+                  <div className="slot-bet-picker">
+                    <div className="slot-stake-mode" role="group" aria-label="Тип ставки">
+                      <button
+                        type="button"
+                        className={slotBetType === 'gold' ? 'is-selected' : ''}
+                        disabled={slotRolling}
+                        onClick={() => { setSlotBetType('gold'); setSlotResult(null); }}
+                      >
+                        Золотом
+                      </button>
+                      <button
+                        type="button"
+                        className={slotBetType === 'creature' ? 'is-selected' : ''}
+                        disabled={slotRolling}
+                        onClick={() => {
+                          setSlotBetType('creature');
+                          setSlotCreatureID((current) => current === '' ? (ownedCreatures[0]?.id ?? '') : current);
+                          setSlotResult(null);
+                        }}
+                      >
+                        Иномеконом
+                      </button>
+                    </div>
+
+                    {slotBetType === 'gold' ? (
+                      <>
+                        <div className="slot-bet-label"><span>ТВОЯ СТАВКА</span><small>от 10 до 10 000 золота</small></div>
+                        <div className="slot-bet-stepper">
+                          <button type="button" aria-label="Уменьшить ставку на 10" disabled={slotRolling || slotBet <= 10} onClick={() => { const next = Math.max(10, slotBet - 10); setSlotBet(next); setSlotBetInput(String(next)); }}>−</button>
+                          <input
+                            className="slot-bet-input"
+                            type="number"
+                            inputMode="numeric"
+                            min={10}
+                            max={10000}
+                            step={1}
+                            aria-label="Ставка в золоте"
+                            value={slotBetInput}
+                            disabled={slotRolling}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              setSlotBetInput(raw);
+                              if (raw !== '' && /^\d+$/.test(raw)) setSlotBet(Number(raw));
+                            }}
+                            onBlur={() => {
+                              const parsed = Number(slotBetInput);
+                              const next = Number.isFinite(parsed) ? Math.max(10, Math.min(10000, Math.trunc(parsed || 10))) : 10;
+                              setSlotBet(next);
+                              setSlotBetInput(String(next));
+                            }}
+                            onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                          />
+                          <button type="button" aria-label="Увеличить ставку на 10" disabled={slotRolling || slotBet >= 10000} onClick={() => { const next = Math.min(10000, slotBet + 10); setSlotBet(next); setSlotBetInput(String(next)); }}>+</button>
+                        </div>
+                        <div className="slot-bet-presets">
+                          {[10, 50, 100, 500, 1000, 2500, 5000, 10000].map((value) => (
+                            <button type="button" key={value} className={slotBet === value ? 'is-selected' : ''} disabled={slotRolling} onClick={() => { setSlotBet(value); setSlotBetInput(String(value)); }}>
+                              {formatNumber(value)}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="slot-creature-picker">
+                        <div className="slot-bet-label"><span>ТВОЯ СТАВКА</span><small>выбери из коллекции</small></div>
+                        <select
+                          className="slot-creature-select"
+                          value={slotCreatureID === '' ? '' : String(slotCreatureID)}
+                          disabled={slotRolling || ownedCreatures.length === 0}
+                          onChange={(event) => setSlotCreatureID(event.target.value ? Number(event.target.value) : '')}
+                        >
+                          <option value="">{ownedCreatures.length ? 'Выбрать иномекона…' : 'Коллекция пока пуста'}</option>
+                          {ownedCreatures.map((owned) => {
+                            const item = currentSpecies.get(owned.species_slug);
+                            return (
+                              <option key={owned.id} value={String(owned.id)}>
+                                {item?.name ?? creatureName(owned.species_slug)} · экземпляр №{owned.id}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <small className="slot-stake-note">Промах — иномекон теряется. Пара сохраняет ставку, тройка приносит ещё иномекона.</small>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="button button--primary slot-spin-button"
+                    type="button"
+                    onClick={() => void playSlot()}
+                    disabled={slotRolling || (slotBetType === 'gold' ? (slotBet < 10 || slotBet > 10000 || !Number.isInteger(slotBet) || (player?.gold ?? 0) < slotBet) : !selectedSlotCreature)}
+                  >
+                    {slotRolling
+                      ? 'КРУТИМ…'
+                      : slotBetType === 'gold'
+                        ? (player?.gold ?? 0) < slotBet ? 'НЕ ХВАТАЕТ ЗОЛОТА' : 'КРУТИТЬ БАРАБАН'
+                        : selectedSlotCreature ? 'ПОСТАВИТЬ ИНОМЕКОН' : 'ВЫБЕРИ ИНОМЕКОН'}
+                    <span>{slotRolling ? '✦' : '↗'}</span>
+                  </button>
+                </div>
+
+                <div className="slot-paytable">
+                  <div><span>🍒 🍒 🍒</span><strong>{slotBetType === 'gold' ? '×4' : '+1 иномекон'}</strong></div>
+                  <div><span>🍋 🍋 🍋</span><strong>{slotBetType === 'gold' ? '×5' : '+1 иномекон'}</strong></div>
+                  <div><span>💎 💎 💎</span><strong>{slotBetType === 'gold' ? '×7' : '+1 иномекон'}</strong></div>
+                  <div><span>⭐ ⭐ ⭐</span><strong>{slotBetType === 'gold' ? '×10' : '+1 иномекон'}</strong></div>
+                  <div className="slot-jackpot"><span>🧬 🧬 🧬</span><strong>{slotBetType === 'gold' ? '×15 + иномекон' : '+2 иномекона'}</strong></div>
+                  <p>{slotBetType === 'gold'
+                    ? 'Любые два одинаковых символа возвращают ×1,2 от ставки. Выплаты и случайный результат рассчитывает сервер.'
+                    : 'При ставке иномеконом промах означает потерю ставки; пара сохраняет иномекона, тройка даёт одного нового, а три 🧬 — двух. Результат рассчитывает сервер.'}</p>
                 </div>
               </article>
-
-              {shopTutorialStep === 'buy' && <div className="tutorial-shop-guide" role="status"><span className="tutorial-guide-kicker">ОБУЧЕНИЕ · ШАГ 1 ИЗ 2</span><strong>Получи первый контейнер</strong><p>Нажми «Получить контейнер». Стоимость будет списана один раз, контейнер появится ниже в инвентаре.</p><button type="button" className="text-button" onClick={() => setShopTutorialStep(null)}>Скрыть подсказку</button></div>}
-              {shopTutorialStep === 'hatch' && <div className="tutorial-shop-guide" role="status"><span className="tutorial-guide-kicker">ОБУЧЕНИЕ · ШАГ 2 ИЗ 2</span><strong>Открой контейнер</strong><p>Покупка не добавляет существо автоматически: выбери контейнер в разделе ниже и нажми «Открыть». Полученный иномекон начнёт приносить пассивный доход.</p><button type="button" className="text-button" onClick={() => setShopTutorialStep(null)}>Понятно</button></div>}
-
-              <div className="lootbox-inventory-heading"><div><p className="eyebrow">ТВОЙ ИНВЕНТАРЬ</p><h2>Мои контейнеры <span className="nav-count">{shopData?.inventory.length ?? 0}</span></h2><p>Открытие бесплатно. Каждый контейнер гарантированно добавляет одного иномекона.</p></div></div>
-              {shopData?.inventory.length ? <div className="owned-eggs-grid">{shopData.inventory.map((lootbox) => <article className="surface owned-egg-card" key={lootbox.id}><div className="owned-egg-icon owned-egg-icon--mystery" aria-hidden="true">{shopData.lootboxes[0]?.image_url ? <img src={shopData.lootboxes[0].image_url} alt="" /> : '◇'}</div><div className="owned-egg-copy"><span className="rarity-tag rarity-tag--mystery">Коллекционный контейнер</span><strong>{shopData.lootboxes[0]?.label ?? 'Контейнер'}</strong><small>Получен {formatDate(lootbox.purchased_at)} · покупка {formatNumber(lootbox.price_gold)} золота</small></div><button className="button button--primary" disabled={shopBusy} onClick={() => void openLootbox(lootbox.id)}>{shopBusy ? 'Открываем…' : 'Открыть'}</button></article>)}</div> : <div className="surface shop-empty shop-empty--compact"><strong>Контейнеров пока нет</strong><span>Получить контейнер можно выше. Внутри всегда будет иномекон.</span></div>}
-              {lastHatch && <div className="surface hatch-result"><ImagePreview src={lastHatch.image_url} name={lastHatch.name} /><div><span className="eyebrow">НОВАЯ НАХОДКА</span><h3>{lastHatch.name}</h3><p>{RARITIES.find((item) => item.value === lastHatch.rarity)?.label ?? lastHatch.rarity} · цена продажи {formatNumber(lastHatch.sell_price_gold)} золота</p>{lastHatch.gold_bonus > 0 && <small>Дополнительно: +{formatNumber(lastHatch.gold_bonus)} золота.</small>}<button className="text-button" onClick={() => showPage('collection')}>Открыть коллекцию →</button></div><span className="hatch-confetti" aria-hidden="true">✦</span></div>}
             </section>
-
 
             <section className="home-grid">
               <article className="surface activation-panel">
@@ -718,7 +958,7 @@ export function App() {
                 ) : (
                   <div className="empty-inline">
                     <strong>Пока нет существ</strong>
-                    <span>Открой контейнер или активируй QR-код, чтобы начать коллекцию.</span>
+                    <span>Активируй первую карточку, чтобы начать коллекцию.</span>
                   </div>
                 )}
               </article>
@@ -728,14 +968,14 @@ export function App() {
 
         {page === 'leaderboards' && (
           <section className="leaderboards-page">
-            <div className="page-title-row"><div><p className="eyebrow">РЕЙТИНГ ИГРОКОВ</p><h1>Лидерборд</h1><p className="page-lead">Три таблицы — пассивный доход, коллекционные контейнеры и будущие соревнования.</p></div><button className="button button--secondary" type="button" disabled={leaderboardsLoading} onClick={() => void refreshLeaderboards().catch(() => undefined)}>{leaderboardsLoading ? 'Обновляем…' : 'Обновить'}</button></div>
+            <div className="page-title-row"><div><p className="eyebrow">РЕЙТИНГ ИГРОКОВ</p><h1>Лидерборд</h1><p className="page-lead">Три таблицы — коллекция, результаты барабана и будущие соревнования.</p></div><button className="button button--secondary" type="button" disabled={leaderboardsLoading} onClick={() => void refreshLeaderboards().catch(() => undefined)}>{leaderboardsLoading ? 'Обновляем…' : 'Обновить'}</button></div>
             {leaderboardsError && <div className="notice notice--error" role="alert"><div><strong>Не удалось загрузить рейтинг</strong><span>{leaderboardsError}</span><button className="text-button" onClick={() => void refreshLeaderboards().catch(() => undefined)}>Попробовать ещё раз</button></div></div>}
             {leaderboardsLoading && !leaderboards ? <div className="surface admin-empty">Загружаем лидерборд…</div> : <div className="leaderboard-grid">
               <article className="surface leaderboard-card"><div className="leaderboard-heading"><span className="leaderboard-icon">♧</span><div><p className="eyebrow">ЛИГА 01</p><h2>Коллекционеры</h2><p>Сначала пассивный доход в час, при равенстве — размер коллекции.</p></div></div>
                 {(leaderboards?.collection ?? []).length ? <div className="leaderboard-list">{leaderboards!.collection.map((item) => <div className={`leaderboard-row${item.rank === 1 ? ' is-first' : ''}`} key={`${item.rank}-${item.name}`}><span className="leaderboard-rank">{item.rank}</span><div className="leaderboard-player"><strong>{item.name}</strong><small>{item.creature_count} иномеконов</small></div><div className="leaderboard-score"><strong>+{formatNumber(item.passive_gold_per_hour)}</strong><small>золота/ч</small></div></div>)}</div> : <div className="leaderboard-empty">Пока нет игроков в рейтинге.</div>}
               </article>
-              <article className="surface leaderboard-card"><div className="leaderboard-heading"><span className="leaderboard-icon">◇</span><div><p className="eyebrow">ЛИГА 02</p><h2>Исследователи</h2><p>Общее золото, потраченное на коллекционные контейнеры за всё время. Награды не уменьшают этот показатель.</p></div></div>
-                {(leaderboards?.container_spending ?? []).length ? <div className="leaderboard-list">{leaderboards!.container_spending.map((item) => <div className={`leaderboard-row${item.rank === 1 ? ' is-first' : ''}`} key={`${item.rank}-${item.name}`}><span className="leaderboard-rank">{item.rank}</span><div className="leaderboard-player"><strong>{item.name}</strong><small>{formatNumber(item.containers_bought)} контейнеров открыто</small></div><div className="leaderboard-score"><strong>{formatNumber(item.total_spent_gold)}</strong><small>золота потрачено</small></div></div>)}</div> : <div className="leaderboard-empty">Рейтинг появится после первой покупки контейнера.</div>}
+              <article className="surface leaderboard-card"><div className="leaderboard-heading"><span className="leaderboard-icon">↻</span><div><p className="eyebrow">ЛИГА 02</p><h2>Главные неудачники барабана</h2><p>Рейтинг по чистой потере золота: ставки минус выплаты.</p></div></div>
+                {(leaderboards?.slot_losses ?? []).length ? <div className="leaderboard-list">{leaderboards!.slot_losses.map((item) => <div className={`leaderboard-row${item.rank === 1 ? ' is-first' : ''}`} key={`${item.rank}-${item.name}`}><span className="leaderboard-rank">{item.rank}</span><div className="leaderboard-player"><strong>{item.name}</strong><small>{formatNumber(item.spins)} прокруток · поставлено {formatNumber(item.total_bet_gold)}</small></div><div className="leaderboard-score leaderboard-score--loss"><strong>−{formatNumber(item.total_lost_gold)}</strong><small>золота</small></div></div>)}</div> : <div className="leaderboard-empty">Пока никто не проиграл золото в барабане. Берегите это достижение 😅</div>}
               </article>
               <article className="surface leaderboard-card leaderboard-card--future"><div className="leaderboard-heading"><span className="leaderboard-icon">⚔</span><div><p className="eyebrow">ЛИГА 03</p><h2>Легенды арены</h2><p>Победы и общая сумма заработка за них.</p></div></div><div className="leaderboard-future-lock"><span>◷</span><strong>{leaderboards?.battles.message ?? 'В скором будущем'}</strong><p>Рейтинг появится, когда будет готова боевая система. Сейчас здесь нет фиктивных результатов.</p></div></article>
             </div>}
@@ -744,8 +984,68 @@ export function App() {
 
         {page === 'shop' && (
           <section className="subpage shop-page">
-            <div className="subpage-heading"><div><p className="eyebrow">INOME · ОБМЕН</p><h1>Обмен</h1><p className="page-lead">Обменивай ненужные экземпляры иномеконов на золото. Стоимость продажи настраивает администратор для каждого вида.</p></div><div className="shop-balance"><span>ТВОЙ БАЛАНС</span><strong>{formatNumber(player?.gold ?? 0)}</strong><small>золота</small></div></div>
-            {ownedCreatures.length ? <div className="shop-creature-list">{ownedCreatures.map((owned) => { const detail=currentSpecies.get(owned.species_slug); const name=detail?.name ?? creatureName(owned.species_slug); const price=detail?.sell_price_gold ?? 0; const confirming=confirmSellID===owned.id; return <article className="surface shop-creature-row" key={owned.id}><ImagePreview src={detail?.image_url ?? ''} name={name}/><div className="shop-creature-copy"><strong>{name}</strong><span>{detail ? RARITIES.find((item)=>item.value===detail.rarity)?.label : 'Иномекон'} · получен {formatDate(owned.obtained_at)}</span><small>{price>0 ? `Цена продажи: ${formatNumber(price)} золота` : 'Продажа не настроена для этого вида'}</small></div>{confirming ? <div className="shop-creature-actions"><button className="button button--secondary button--small" disabled={shopBusy} onClick={()=>setConfirmSellID(null)}>Отмена</button><button className="button button--danger button--small" disabled={shopBusy || price<=0} onClick={()=>void sellCreature(owned.id)}>{shopBusy ? 'Продаём…' : 'Подтвердить'}</button></div> : <button className="button button--secondary button--small" disabled={shopBusy || price<=0} onClick={()=>setConfirmSellID(owned.id)}>{price>0 ? `Продать · ${formatNumber(price)}` : 'Нет цены'}</button>}</article>; })}</div> : <div className="surface shop-empty shop-empty--compact"><strong>Коллекция пока пуста</strong><span>Получи иномеконов из коллекционных контейнеров или QR-кодов. Затем можешь обменять экземпляры здесь.</span><button className="button button--primary" onClick={()=>showPage('home')}>Открыть контейнеры</button></div>}
+            <div className="subpage-heading">
+              <div>
+                <p className="eyebrow">INOME · МАГАЗИН</p>
+                <h1>Магазин</h1>
+                <p className="page-lead">Покупай яйца за золото, вылупляй новых иномеконов или продавай лишних из своей коллекции.</p>
+              </div>
+              <div className="shop-balance"><span>ТВОЙ БАЛАНС</span><strong>{formatNumber(player?.gold ?? 0)}</strong><small>золота</small></div>
+            </div>
+
+            {shopTutorialStep && <div className="tutorial-shop-guide" role="status">
+              <span className="tutorial-guide-kicker">ОБУЧЕНИЕ · ШАГ {shopTutorialStep === 'buy' ? '1' : '2'} ИЗ 2</span>
+              <strong>{shopTutorialStep === 'buy' ? 'Сначала купи яйцо' : 'Теперь вылупи яйцо'}</strong>
+              <p>{shopTutorialStep === 'buy'
+                ? 'Выбери яйцо по цене и редкости. Покупка положит его в рюкзак, но иномекон не появится автоматически — для этого нужен следующий шаг.'
+                : 'Пролистай вниз до раздела «Яйца в рюкзаке» и нажми «Вылупить». Иномекон добавится в коллекцию, а его пассивный доход будет прибавляться со временем.'}</p>
+              <button type="button" className="text-button" onClick={() => setShopTutorialStep(null)}>Скрыть подсказку</button>
+            </div>}
+            {!shopData ? (
+              <div className="surface shop-empty"><h2>Магазин пока недоступен</h2><p>Не удалось загрузить данные магазина. Обнови страницу; если ошибка повторяется, проверь, что миграции 008 и 010 применены и backend перезапущен.</p><button className="button button--secondary" onClick={() => void api.shop(initData).then(setShopData).catch((error) => setNotice({ kind: 'error', title: 'Ошибка магазина', message: errorMessage(error) }))}>Повторить</button></div>
+            ) : (
+              <>
+                <div className="shop-section-heading"><div><p className="eyebrow">СЛУЧАЙНЫЙ ИНОМЕКОН</p><h2>Яйца</h2><p>Из яйца вылупляется случайный активный вид выбранной редкости. Сначала в каталоге должен быть хотя бы один такой иномекон.</p></div></div>
+                <div className="egg-grid">
+                  {shopData.egg_offers.map((offer) => {
+                    const rarityLabel = offer.rarity === 'mystery' ? 'СЕКРЕТНОЕ ЯЙЦО' : RARITIES.find((item) => item.value === offer.rarity)?.label ?? offer.label;
+                    const emoji = ({ common: '🥚', rare: '🪺', epic: '💠', legendary: '🌟', mythic: '🌌', mystery: '🪐' } as Record<EggKind, string>)[offer.rarity];
+                    const canAfford = (player?.gold ?? 0) >= offer.price_gold;
+                    return <article className={`surface egg-card egg-card--${offer.rarity}`} key={offer.rarity}>
+                      <div className="egg-card-art">{offer.image_url ? <img src={offer.image_url} alt={offer.label} /> : <span>{emoji}</span>}</div>
+                      <div className="egg-card-copy"><span className={`rarity-tag rarity-tag--${offer.rarity}`}>{rarityLabel}</span><h3>{offer.label}</h3><p>{offer.description || (offer.available ? `В каталоге ${offer.available_species} ${offer.available_species === 1 ? 'вид' : offer.available_species < 5 ? 'вида' : 'видов'} этой редкости.` : 'Пока нет активных иномеконов этой редкости.')}</p>{offer.rarity === 'mystery' && <div className="egg-rarity-chances"><strong>Шансы получить редкость</strong><div>{RARITIES.map((rarity) => <span key={rarity.value}><em>{rarity.label}</em><b>{offer.rarity_chances?.[rarity.value] ?? 0}%</b></span>)}</div><small>Выбор иномекона внутри редкости случайный. Если какой-то редкости нет в каталоге, шансы распределяются между доступными видами; если подходящих редкостей совсем нет по заданным весам — поровну.</small></div>}</div>
+                      <div className="egg-card-buy"><strong>{formatNumber(offer.price_gold)} <small>золота</small></strong><button className="button button--primary" disabled={shopBusy || !offer.available || !canAfford} onClick={() => void buyEgg(offer.rarity)}>{shopBusy ? 'Подожди…' : !offer.available ? 'Нет в каталоге' : !canAfford ? 'Не хватает золота' : 'Купить яйцо'}</button></div>
+                    </article>;
+                  })}
+                </div>
+
+                <div className="shop-section-heading shop-section-heading--inventory"><div><p className="eyebrow">ТВОЙ ИНВЕНТАРЬ</p><h2>Яйца в рюкзаке <span className="nav-count">{shopData.eggs.length}</span></h2><p>Вылупление бесплатно. Внутри будет случайный иномекон соответствующей редкости.</p></div></div>
+                {shopData.eggs.length ? <div className="owned-eggs-grid">
+                  {shopData.eggs.map((egg) => <article className="surface owned-egg-card" key={egg.id}>
+                    <div className={`owned-egg-icon owned-egg-icon--${egg.rarity}`} aria-hidden="true">{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.image_url ? <img src={shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.image_url} alt="" /> : '🥚'}</div>
+                    <div className="owned-egg-copy"><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{egg.rarity === 'mystery' ? 'Загадочное яйцо' : RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span><strong>{shopData.egg_offers.find((offer) => offer.rarity === egg.rarity)?.label ?? `${RARITIES.find((item) => item.value === egg.rarity)?.label ?? egg.rarity} яйцо`}</strong><small>Куплено {formatDate(egg.purchased_at)}</small></div>
+                    <button className="button button--primary" disabled={shopBusy} onClick={() => void hatchEgg(egg.id)}>{shopBusy ? 'Открываем…' : 'Вылупить'}</button>
+                  </article>)}
+                </div> : <div className="surface shop-empty shop-empty--compact"><strong>Пока нет яиц</strong><span>Купи яйцо выше — оно появится здесь, и ты сможешь вылупить его в любой момент.</span></div>}
+
+                {lastHatch && <div className="surface hatch-result"><ImagePreview src={lastHatch.image_url} name={lastHatch.name} /><div><span className="eyebrow">НОВЫЙ ИНОМЕКОН</span><h3>{lastHatch.name}</h3><p>{RARITIES.find((item) => item.value === lastHatch.rarity)?.label ?? lastHatch.rarity} · цена продажи {formatNumber(lastHatch.sell_price_gold)} золота</p><button className="text-button" onClick={() => showPage('collection')}>Открыть коллекцию →</button></div><span className="hatch-confetti" aria-hidden="true">✦</span></div>}
+
+                <div className="shop-section-heading shop-section-heading--inventory"><div><p className="eyebrow">ОБМЕН НА ЗОЛОТО</p><h2>Продать иномекона</h2><p>Цена задана в админке для каждого вида. Продажа удаляет один выбранный экземпляр, но сам вид останется открытым в коллекции.</p></div></div>
+                {ownedCreatures.length ? <div className="shop-creature-list">
+                  {ownedCreatures.map((owned) => {
+                    const detail = currentSpecies.get(owned.species_slug);
+                    const name = detail?.name ?? creatureName(owned.species_slug);
+                    const price = detail?.sell_price_gold ?? 0;
+                    const confirming = confirmSellID === owned.id;
+                    return <article className="surface shop-creature-row" key={owned.id}>
+                      <ImagePreview src={detail?.image_url ?? ''} name={name} />
+                      <div className="shop-creature-copy"><strong>{name}</strong><span>{detail ? RARITIES.find((item) => item.value === detail.rarity)?.label : 'Иномекон'} · получен {formatDate(owned.obtained_at)}</span><small>{price > 0 ? `Цена продажи: ${formatNumber(price)} золота` : 'Продажа не настроена для этого вида'}</small></div>
+                      {confirming ? <div className="shop-creature-actions"><button className="button button--secondary button--small" disabled={shopBusy} onClick={() => setConfirmSellID(null)}>Отмена</button><button className="button button--danger button--small" disabled={shopBusy || price <= 0} onClick={() => void sellCreature(owned.id)}>{shopBusy ? 'Продаём…' : 'Подтвердить'}</button></div> : <button className="button button--secondary button--small" disabled={shopBusy || price <= 0} onClick={() => setConfirmSellID(owned.id)}>{price > 0 ? `Продать · ${formatNumber(price)}` : 'Нет цены'}</button>}
+                    </article>;
+                  })}
+                </div> : <div className="surface shop-empty shop-empty--compact"><strong>Некого продавать</strong><span>Получай иномеконов из яиц, карточек или барабана удачи.</span></div>}
+              </>
+            )}
           </section>
         )}
 
@@ -865,26 +1165,26 @@ export function App() {
             {tutorialStep === 0 && <>
               <div className="tutorial-modal-art">🧬</div>
               <h2 id="tutorial-modal-title">Добро пожаловать в Иномекопы!</h2>
-              <p>Твоя цель — собирать необычных существ, открывать редкие виды и развивать коллекцию. Золото нужно для коллекционных контейнеров, а иномеконы постепенно приносят пассивный доход.</p>
+              <p>Твоя цель — собирать необычных существ, открывать редкие виды и развивать коллекцию. Золото нужно для яиц и ставок, а иномеконы постепенно приносят пассивный доход.</p>
               <div className="tutorial-tip"><strong>Подсказка</strong><span>Это обучение можно в любой момент открыть кнопкой «Как играть» в верхнем меню.</span></div>
             </>}
             {tutorialStep === 1 && <>
-              <div className="tutorial-modal-art">📦</div>
-              <h2 id="tutorial-modal-title">Получи контейнер</h2>
-              <p>На главной странице есть коллекционный контейнер. Перед покупкой посмотри опубликованные вероятности. В админке настроенная стоимость списывается один раз при покупке.</p>
-              <div className="tutorial-tip"><strong>Важно</strong><span>Покупка добавляет контейнер в инвентарь, а иномекон появится только после нажатия «Открыть».</span></div>
+              <div className="tutorial-modal-art">🥚</div>
+              <h2 id="tutorial-modal-title">Купи яйцо в магазине</h2>
+              <p>Нажми «Магазин» в верхнем меню, выбери яйцо по цене и редкости и нажми «Купить яйцо». Для первого знакомства подойдёт обычное яйцо, а у загадочного сразу показаны шансы всех редкостей.</p>
+              <div className="tutorial-tip"><strong>Важно</strong><span>Покупка не добавляет иномекона сразу: яйцо сначала попадёт в рюкзак, и его нужно вылупить.</span></div>
             </>}
             {tutorialStep === 2 && <>
-              <div className="tutorial-modal-art">✨</div>
-              <h2 id="tutorial-modal-title">Открой и изучи иномекона</h2>
-              <p>В блоке «Мои контейнеры» нажми «Открыть». Полученный иномекон появится в коллекции и начнёт приносить пассивный доход. Нажми на его карточку, чтобы увидеть характеристики.</p>
-              <div className="tutorial-tip"><strong>Подсказка</strong><span>Если не хочешь покупать контейнер, иномекона можно получить из промокода или QR-кода.</span></div>
+              <div className="tutorial-modal-art">🐣</div>
+              <h2 id="tutorial-modal-title">Вылупи яйцо и получай доход</h2>
+              <p>В магазине пролистай страницу до раздела «Яйца в рюкзаке» и нажми «Вылупить». Новый иномекон появится в коллекции и добавит свой пассивный доход к твоему доходу в золоте за час.</p>
+              <div className="tutorial-tip"><strong>Не потеряйся</strong><span>После покупки мы покажем подсказку, которая укажет на инвентарь яиц и кнопку вылупления.</span></div>
             </>}
             {tutorialStep === 3 && <>
-              <div className="tutorial-modal-art">🏷️</div>
-              <h2 id="tutorial-modal-title">Коды и основной иномекон</h2>
-              <p>Код с карточки или QR-код может выдать золото, иномекона или обе награды. А если выбрать своего иномекона в основном слоте, его бонус будет действовать, пока он там установлен.</p>
-              <div className="tutorial-tip"><strong>Всё прозрачно</strong><span>В контейнере показаны вероятности, а награда каждого промокода задаётся заранее при создании партии.</span></div>
+              <div className="tutorial-modal-art">🎰</div>
+              <h2 id="tutorial-modal-title">Барабан удачи</h2>
+              <p>На главной можно поставить золото или конкретного иномекона. Результат и выплата рассчитываются сервером; прокрутка случайна и не гарантирует выигрыш. При победе главное число показывает, сколько золота начислено на баланс.</p>
+              <div className="tutorial-tip"><strong>Начни спокойно</strong><span>Проверь ставки и правила выплат перед прокруткой. Не ставь то, что не готов потерять.</span></div>
             </>}
             <div className="tutorial-modal-actions">
               <button className="button button--secondary" type="button" disabled={tutorialStep === 0} onClick={() => setTutorialStep((step) => Math.max(0, step - 1))}>Назад</button>
@@ -892,7 +1192,7 @@ export function App() {
                 ? <button className="button button--primary" type="button" onClick={() => setTutorialStep((step) => Math.min(3, step + 1))}>Далее →</button>
                 : <button className="button button--primary" type="button" onClick={closeTutorial}>Начать игру</button>}
             </div>
-            {tutorialStep === 1 && <button className="tutorial-direct-shop" type="button" onClick={goToShopFromTutorial}>Практика: открыть контейнеры ↗</button>}
+            {tutorialStep === 1 && <button className="tutorial-direct-shop" type="button" onClick={goToShopFromTutorial}>Практика: перейти в магазин ↗</button>}
             <button className="tutorial-skip" type="button" onClick={closeTutorial}>Пропустить обучение</button>
           </section>
         </div>

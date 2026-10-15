@@ -52,9 +52,9 @@ type Species struct {
 	ImageURL            string    `json:"image_url"`
 	SellPriceGold       int64     `json:"sell_price_gold"`
 	Rarity              string    `json:"rarity"`
-	PassiveGoldPerHour  float64   `json:"passive_gold_per_hour"`
-	Health              float64   `json:"health"`
-	Damage              float64   `json:"damage"`
+	PassiveGoldPerHour  int64     `json:"passive_gold_per_hour"`
+	Health              int       `json:"health"`
+	Damage              int       `json:"damage"`
 	CritChance          float64   `json:"crit_chance"`
 	AbilityID           int64     `json:"ability_id"`
 	AbilityName         string    `json:"ability_name"`
@@ -64,7 +64,7 @@ type Species struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 	IsFeatured          bool      `json:"is_featured"`
 	MainBonusType       string    `json:"main_bonus_type"`
-	MainBonusMultiplier float64   `json:"main_bonus_multiplier"`
+	MainBonusMultiplier int       `json:"main_bonus_multiplier"`
 }
 
 // CollectionSpecies is the player-facing collection entry. For undiscovered
@@ -79,15 +79,15 @@ type CollectionSpecies struct {
 	ImageURL            *string  `json:"image_url,omitempty"`
 	SellPriceGold       *int64   `json:"sell_price_gold,omitempty"`
 	Rarity              *string  `json:"rarity,omitempty"`
-	PassiveGoldPerHour  *float64 `json:"passive_gold_per_hour,omitempty"`
-	Health              *float64 `json:"health,omitempty"`
-	Damage              *float64 `json:"damage,omitempty"`
+	PassiveGoldPerHour  *int64   `json:"passive_gold_per_hour,omitempty"`
+	Health              *int     `json:"health,omitempty"`
+	Damage              *int     `json:"damage,omitempty"`
 	CritChance          *float64 `json:"crit_chance,omitempty"`
 	AbilityID           *int64   `json:"ability_id,omitempty"`
 	AbilityName         *string  `json:"ability_name,omitempty"`
 	AbilitySlug         *string  `json:"ability_slug,omitempty"`
 	MainBonusType       *string  `json:"main_bonus_type,omitempty"`
-	MainBonusMultiplier *float64 `json:"main_bonus_multiplier,omitempty"`
+	MainBonusMultiplier *int     `json:"main_bonus_multiplier,omitempty"`
 }
 
 func collectionSpecies(item Species, discovered bool) CollectionSpecies {
@@ -120,14 +120,14 @@ type SpeciesInput struct {
 	ImageURL            string  `json:"image_url"`
 	SellPriceGold       int64   `json:"sell_price_gold"`
 	Rarity              string  `json:"rarity"`
-	PassiveGoldPerHour  float64 `json:"passive_gold_per_hour"`
-	Health              float64 `json:"health"`
-	Damage              float64 `json:"damage"`
+	PassiveGoldPerHour  int64   `json:"passive_gold_per_hour"`
+	Health              int     `json:"health"`
+	Damage              int     `json:"damage"`
 	CritChance          float64 `json:"crit_chance"`
 	AbilityID           int64   `json:"ability_id"`
 	IsFeatured          bool    `json:"is_featured"`
 	MainBonusType       string  `json:"main_bonus_type"`
-	MainBonusMultiplier float64 `json:"main_bonus_multiplier"`
+	MainBonusMultiplier int     `json:"main_bonus_multiplier"`
 }
 
 type SpeciesUpdateInput struct {
@@ -136,12 +136,12 @@ type SpeciesUpdateInput struct {
 	ImageURL            string  `json:"image_url"`
 	SellPriceGold       int64   `json:"sell_price_gold"`
 	Rarity              string  `json:"rarity"`
-	PassiveGoldPerHour  float64 `json:"passive_gold_per_hour"`
-	Health              float64 `json:"health"`
-	Damage              float64 `json:"damage"`
+	PassiveGoldPerHour  int64   `json:"passive_gold_per_hour"`
+	Health              int     `json:"health"`
+	Damage              int     `json:"damage"`
 	CritChance          float64 `json:"crit_chance"`
 	AbilityID           int64   `json:"ability_id"`
 	IsFeatured          bool    `json:"is_featured"`
 	MainBonusType       string  `json:"main_bonus_type"`
-	MainBonusMultiplier float64 `json:"main_bonus_multiplier"`
+	MainBonusMultiplier int     `json:"main_bonus_multiplier"`
 }

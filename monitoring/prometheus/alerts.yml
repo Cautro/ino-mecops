@@ -27,21 +27,3 @@ groups:
         annotations:
           summary: "Высокая задержка API Inomecops"
           description: "95-й перцентиль времени ответа превышает 1 секунду в течение 5 минут."
-
-      - alert: InomecopsBusinessMetricsUnavailable
-        expr: inomecops_business_metrics_available == 0
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Не удалось прочитать бизнес-метрики из PostgreSQL"
-          description: "HTTP-метрики доступны, но запросы для метрик контейнеров/QR-кодов падают. Проверь миграции 012 и права роли inomecops на связанные таблицы."
-
-      - alert: InomecopsLootboxOrCodeServerErrors
-        expr: sum(rate(inomecops_http_errors_total{status=~"5..",route=~"/api/v1/(shop/lootboxes.*|codes/redeem|admin/code-batches.*)"}[5m])) > 0
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Ошибки при покупке контейнеров или активации QR-кодов"
-          description: "Есть ответы HTTP 5xx на ключевых игровых маршрутах. Проверь journalctl -u inomecops и логи PostgreSQL."
