@@ -94,7 +94,7 @@ func (u *UseCase) CreateBatch(ctx context.Context, createdBy int64, req CreateBa
 		if goldMin < 0 || goldMax < goldMin || goldMax > 100_000_000 || len(req.RewardCreatureRarities) > 5 {
 			return CreateBatchResponse{}, ErrInvalidBatch
 		}
-		if len(req.RewardCreatureRarities) == 0 && goldMin < 1 {
+		if len(req.RewardCreatureRarities) == 0 && goldMax < 1 {
 			return CreateBatchResponse{}, ErrInvalidBatch
 		}
 		validRarities := map[string]bool{"common": true, "rare": true, "epic": true, "legendary": true, "mythic": true}
@@ -114,14 +114,12 @@ func (u *UseCase) CreateBatch(ctx context.Context, createdBy int64, req CreateBa
 			if err != nil {
 				return CreateBatchResponse{}, err
 			}
-			found := make(map[string]bool)
-			for _, species := range available {
-				found[species.Rarity] = true
-			}
-			for _, rarity := range selectedRarities {
-				if !found[rarity] {
-					return CreateBatchResponse{}, fmt.Errorf("selected rarity %s has no active species: %w", rarity, ErrInvalidBatch)
-				}
+			// A selected rarity without active species is simply skipped during
+			// drawing. This lets "all rarities" work before every rarity has a
+			// creature in the catalog, while the remaining rarities keep their
+			// configured relative weights.
+			if len(available) == 0 && goldMax < 1 {
+				return CreateBatchResponse{}, ErrInvalidBatch
 			}
 		}
 		for i := range rewards {
@@ -212,9 +210,15 @@ func weightedSpeciesChoice(species []ActiveSpeciesOption, rarities []string) (Ac
 	for _, rarity := range rarities {
 		allowed[rarity] = true
 	}
+	availableRarity := make(map[string]bool, len(species))
+	for _, item := range species {
+		availableRarity[item.Rarity] = true
+	}
 	var total int64
 	for rarity := range allowed {
-		total += base[rarity]
+		if availableRarity[rarity] {
+			total += base[rarity]
+		}
 	}
 	if total <= 0 {
 		return ActiveSpeciesOption{}, ErrInvalidBatch
@@ -227,7 +231,7 @@ func weightedSpeciesChoice(species []ActiveSpeciesOption, rarities []string) (Ac
 	chosen := ""
 	order := []string{"common", "rare", "epic", "legendary", "mythic"}
 	for _, rarity := range order {
-		if !allowed[rarity] {
+		if !allowed[rarity] || !availableRarity[rarity] {
 			continue
 		}
 		if roll < base[rarity] {
@@ -327,4 +331,22 @@ func (u *UseCase) DeleteBatch(ctx context.Context, id int64) error {
 		return ErrBatchNotFound
 	}
 	return u.repo.DeleteBatch(ctx, id)
+}
+
+func (u *UseCase) ListLeaderboardPlayers(ctx context.Context) ([]LeaderboardPlayer, error) {
+	return u.repo.ListLeaderboardPlayers(ctx)
+}
+
+func (u *UseCase) HideLeaderboardPlayer(ctx context.Context, playerTelegramID, adminTelegramID int64) error {
+	if playerTelegramID <= 0 || adminTelegramID <= 0 {
+		return ErrLeaderboardPlayerNotFound
+	}
+	return u.repo.SetLeaderboardHidden(ctx, playerTelegramID, adminTelegramID)
+}
+
+func (u *UseCase) ShowLeaderboardPlayer(ctx context.Context, playerTelegramID int64) error {
+	if playerTelegramID <= 0 {
+		return ErrLeaderboardPlayerNotFound
+	}
+	return u.repo.RemoveLeaderboardHidden(ctx, playerTelegramID)
 }

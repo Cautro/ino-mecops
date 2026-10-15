@@ -81,6 +81,13 @@ type BatchSummary struct {
 	RedeemedCount          int64      `json:"redeemed_count"`
 }
 
+type LeaderboardPlayer struct {
+	TelegramID int64  `json:"telegram_id"`
+	Name       string `json:"name"`
+	Username   string `json:"username,omitempty"`
+	Hidden     bool   `json:"hidden"`
+}
+
 type CreateBatchResponse struct {
 	BatchID                int64      `json:"batch_id"`
 	Label                  string     `json:"label"`

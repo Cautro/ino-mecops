@@ -12,6 +12,7 @@ import (
 
 var ErrBatchNotFound = errors.New("batch not found or already revoked")
 var ErrBatchHasRedemptions = errors.New("batch has redeemed codes")
+var ErrLeaderboardPlayerNotFound = errors.New("leaderboard player not found")
 
 type PostgresRepository struct {
 	db *sql.DB
@@ -273,4 +274,53 @@ func (r *PostgresRepository) DeleteBatch(ctx context.Context, id int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (r *PostgresRepository) ListLeaderboardPlayers(ctx context.Context) ([]LeaderboardPlayer, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT p.telegram_id,
+		       COALESCE(NULLIF('@' || p.username, '@'), NULLIF(p.first_name, ''), 'Игрок') AS display_name,
+		       COALESCE(p.username, ''),
+		       EXISTS (SELECT 1 FROM leaderboard_hidden_players h WHERE h.player_telegram_id=p.telegram_id) AS hidden
+		FROM players p
+		ORDER BY hidden DESC, display_name ASC, p.telegram_id ASC
+		LIMIT 2000
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]LeaderboardPlayer, 0)
+	for rows.Next() {
+		var item LeaderboardPlayer
+		if err := rows.Scan(&item.TelegramID, &item.Name, &item.Username, &item.Hidden); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *PostgresRepository) SetLeaderboardHidden(ctx context.Context, playerTelegramID, adminTelegramID int64) error {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM players WHERE telegram_id=$1)`, playerTelegramID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrLeaderboardPlayerNotFound
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO leaderboard_hidden_players (player_telegram_id, hidden_by_telegram_id)
+		VALUES ($1,$2)
+		ON CONFLICT (player_telegram_id) DO UPDATE SET hidden_by_telegram_id=EXCLUDED.hidden_by_telegram_id, created_at=now()
+	`, playerTelegramID, adminTelegramID)
+	return err
+}
+
+func (r *PostgresRepository) RemoveLeaderboardHidden(ctx context.Context, playerTelegramID int64) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM leaderboard_hidden_players WHERE player_telegram_id=$1`, playerTelegramID)
+	return err
 }

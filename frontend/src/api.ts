@@ -73,7 +73,17 @@ export type OwnedEgg = {
 };
 
 export type ShopData = { egg_offers: EggOffer[]; eggs: OwnedEgg[] };
-export type BuyEggResult = { egg: OwnedEgg; gold_balance: number };
+export type BuyEggResult = {
+  egg: Pick<OwnedEgg, 'rarity' | 'price_gold' | 'purchased_at'>;
+  gold_balance: number;
+  creature_id: number;
+  species_slug: string;
+  name: string;
+  image_url: string;
+  rarity: Rarity;
+  sell_price_gold: number;
+  gold_bonus: number;
+};
 export type HatchEggResult = {
   egg_id: number;
   creature_id: number;
@@ -93,7 +103,7 @@ export type SellCreatureResult = {
 };
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
-export type MainBonusType = 'none' | 'slot_chance' | 'slot_payout' | 'passive_income';
+export type MainBonusType = 'none' | 'lootbox_chance' | 'lootbox_gold' | 'passive_income';
 
 export type CollectionSpecies = {
   id: number;
@@ -265,6 +275,10 @@ export type Batch = {
   reward_name: string;
   reward_rarity: string;
   reward_gold: number;
+  reward_mode?: 'fixed' | 'random';
+  reward_gold_min?: number;
+  reward_gold_max?: number;
+  reward_creature_rarities?: Rarity[];
   reward_creature_slug?: string;
   created_by: number;
   created_at: string;
@@ -278,9 +292,13 @@ export type CreatedBatch = {
   batch_id: number;
   label: string;
   count: number;
+  reward_mode: 'fixed' | 'random';
   reward_name: string;
   reward_rarity: string;
   reward_gold: number;
+  reward_gold_min: number;
+  reward_gold_max: number;
+  reward_creature_rarities: Rarity[];
   reward_creature_slug?: string;
   expires_at?: string;
   codes: string[];
@@ -288,18 +306,29 @@ export type CreatedBatch = {
 
 export type BatchCodesResponse = {
   batch_id: number;
-  codes: { code: string; redeemed_at?: string }[];
+  codes: { code?: string; redeemed_at?: string; reward_gold?: number; reward_creature_slug?: string; reward_name?: string; reward_rarity?: string }[];
   unavailable_count: number;
 };
 
 export type CreateBatchInput = {
   label: string;
   count: number;
+  reward_mode: 'fixed' | 'random';
   reward_name: string;
   reward_rarity: string;
   reward_gold: number;
+  reward_gold_min: number;
+  reward_gold_max: number;
+  reward_creature_rarities: Rarity[];
   reward_creature_slug?: string;
   expires_in_days: number;
+};
+
+export type LeaderboardPlayer = {
+  telegram_id: number;
+  name: string;
+  username?: string;
+  hidden: boolean;
 };
 
 // ==================== Демо-состояние и утилиты ====================
@@ -332,17 +361,18 @@ let demoBatches: Batch[] = [
 ];
 
 let demoBatchID = 2;
+let demoBatchCodeSnapshots = new Map<number, BatchCodesResponse['codes']>();
+let demoLeaderboardPlayers: LeaderboardPlayer[] = [
+  { telegram_id: 100000001, name: '@demo_player', username: 'demo_player', hidden: false },
+  { telegram_id: 100000002, name: 'Тестовый участник', username: 'demo_member', hidden: false },
+  { telegram_id: 100000003, name: 'Скрытый участник', username: 'hidden_member', hidden: true },
+];
 let demoSpeciesID = 4;
 let demoEggID = 1;
 let demoEggs: OwnedEgg[] = [];
 let demoDiscoveredSlugs = new Set<string>(['ino-sprout']);
 let demoEggCatalog: EggProduct[] = [
-  { rarity: 'common', label: 'Обычное яйцо', price_gold: 250, image_url: '', description: 'Простое яйцо с обычным иномеконом.', is_active: true, updated_at: new Date().toISOString() },
-  { rarity: 'rare', label: 'Редкое яйцо', price_gold: 1000, image_url: '', description: 'Шанс получить редкого иномекона.', is_active: true, updated_at: new Date().toISOString() },
-  { rarity: 'epic', label: 'Эпическое яйцо', price_gold: 2500, image_url: '', description: 'Эпическая находка.', is_active: true, updated_at: new Date().toISOString() },
-  { rarity: 'legendary', label: 'Легендарное яйцо', price_gold: 7500, image_url: '', description: 'Редкая возможность найти легендарный вид.', is_active: true, updated_at: new Date().toISOString() },
-  { rarity: 'mythic', label: 'Мифическое яйцо', price_gold: 15000, image_url: '', description: 'Яйцо с мифическим иномеконом.', is_active: true, updated_at: new Date().toISOString() },
-  { rarity: 'mystery', rarity_chances: { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 }, label: 'Загадочное яйцо', price_gold: 1800, image_url: '', description: 'Содержит иномекона любой редкости. Мифические находки очень редкие.', is_active: true, updated_at: new Date().toISOString() },
+  { rarity: 'mystery', rarity_chances: { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 }, label: 'Коллекционный контейнер', price_gold: 1800, image_url: '', description: 'Покупка сразу выдаёт случайного иномекона. Мифические находки очень редкие.', is_active: true, updated_at: new Date().toISOString() },
 ];
 
 let demoSpecies: Species[] = [
@@ -519,6 +549,13 @@ export const api = {
   deleteBatch: (initData: string, id: number) =>
     request<{ ok: boolean; batch_id: number }>(`/api/v1/admin/code-batches/${id}`, initData, { method: 'DELETE' }),
 
+  adminLeaderboardPlayers: (initData: string) =>
+    request<{ items: LeaderboardPlayer[] }>('/api/v1/admin/leaderboard-players', initData),
+  hideLeaderboardPlayer: (initData: string, id: number) =>
+    request<{ ok: boolean; telegram_id: number; hidden: boolean }>(`/api/v1/admin/leaderboard-players/${id}/hide`, initData, { method: 'POST', body: {} }),
+  showLeaderboardPlayer: (initData: string, id: number) =>
+    request<{ ok: boolean; telegram_id: number; hidden: boolean }>(`/api/v1/admin/leaderboard-players/${id}/hide`, initData, { method: 'DELETE' }),
+
   listAdminSpecies: (initData: string) =>
     request<{ items: Species[] }>('/api/v1/admin/creatures', initData),
   collectionCatalog: (initData: string) =>
@@ -677,16 +714,32 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
   if (path === '/api/v1/shop/eggs/buy' && options.method === 'POST') {
     const payload = options.body as { rarity: EggKind };
     const product = demoEggCatalog.find((item) => item.rarity === payload.rarity);
-    const offer = payload.rarity === 'mystery'
-      ? demoSpecies.some((species) => species.is_active)
-      : demoSpecies.some((species) => species.is_active && species.rarity === payload.rarity);
-    if (!product || !product.is_active || !offer) throw new APIError('Это яйцо сейчас недоступно.', 409, 'egg_unavailable');
+    if (!product || !product.is_active || !demoSpecies.some((species) => species.is_active)) throw new APIError('Этот контейнер сейчас недоступен.', 409, 'lootbox_unavailable');
     const price = product.price_gold;
-    if (demoGold < price) throw new APIError('Не хватает золота для покупки этого яйца.', 409, 'insufficient_gold');
+    if (demoGold < price) throw new APIError('Не хватает золота для покупки контейнера.', 409, 'insufficient_gold');
+    const weights = product.rarity_chances ?? { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 };
+    const possibleRarities = (Object.entries(weights) as [Rarity, number][]).filter(([rarity, weight]) => weight > 0 && demoSpecies.some((item) => item.is_active && item.rarity === rarity));
+    const totalWeight = possibleRarities.reduce((sum, [, weight]) => sum + weight, 0);
+    if (totalWeight <= 0) throw new APIError('В каталоге нет доступных иномеконов.', 409, 'lootbox_unavailable');
+    let roll = Math.random() * totalWeight;
+    let selectedRarity: Rarity = possibleRarities[0][0];
+    for (const [rarity, weight] of possibleRarities) { roll -= weight; if (roll < 0) { selectedRarity = rarity; break; } }
+    const possible = demoSpecies.filter((item) => item.is_active && item.rarity === selectedRarity);
+    const picked = possible[Math.floor(Math.random() * possible.length)];
     demoGold -= price;
-    const egg: OwnedEgg = { id: demoEggID++, rarity: payload.rarity, price_gold: price, purchased_at: new Date().toISOString() };
-    demoEggs = [egg, ...demoEggs];
-    return { egg, gold_balance: demoGold } as T;
+    const creature: Creature = { id: Date.now(), species_slug: picked.slug, obtained_at: new Date().toISOString() };
+    demoCreatures = [creature, ...demoCreatures];
+    demoDiscoveredSlugs.add(picked.slug);
+    const selectedMainCreature = demoCreatures.find((item) => item.id === demoMainCreatureID);
+    const selectedMainSpecies = demoSpecies.find((item) => item.slug === selectedMainCreature?.species_slug);
+    const goldBonus = selectedMainSpecies?.main_bonus_type === 'lootbox_gold' && (selectedMainSpecies.main_bonus_multiplier ?? 1) > 1
+      ? Math.floor(price * ((selectedMainSpecies.main_bonus_multiplier ?? 1) - 1) / 10) : 0;
+    demoGold += goldBonus;
+    return {
+      egg: { rarity: 'mystery', price_gold: price, purchased_at: new Date().toISOString() },
+      gold_balance: demoGold, creature_id: creature.id, species_slug: picked.slug, name: picked.name,
+      image_url: picked.image_url, rarity: picked.rarity, sell_price_gold: picked.sell_price_gold, gold_bonus: goldBonus,
+    } as T;
   }
 
   const hatchMatch = path.match(/^\/api\/v1\/shop\/eggs\/(\d+)\/hatch$/);
@@ -740,7 +793,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     const selectedMainSpecies = demoSpecies.find((species) => species.slug === selectedMainCreature?.species_slug);
     const mainBonusType = selectedMainSpecies?.main_bonus_type ?? 'none';
     const mainBonusMultiplier = Math.max(1, Math.min(10, selectedMainSpecies?.main_bonus_multiplier ?? 1));
-    const attempts = mainBonusType === 'slot_chance' ? mainBonusMultiplier : 1;
+    const attempts = mainBonusType === 'lootbox_chance' ? mainBonusMultiplier : 1;
     let result: [string, string, string] = ['🍒', '🍋', '💎'];
     let payout = 0;
     let winType: SlotSpinResult['win_type'] = 'miss';
@@ -810,7 +863,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
         multiplier,
         main_bonus_type: mainBonusType,
         main_bonus_multiplier: mainBonusMultiplier,
-        bonus_applied: mainBonusType === 'slot_chance' && mainBonusMultiplier > 1,
+        bonus_applied: mainBonusType === 'lootbox_chance' && mainBonusMultiplier > 1,
         bet_creature_id: creatureID,
         bet_creature_slug: staked.species_slug,
         bet_creature_name: creatureNameForDemo(staked.species_slug),
@@ -843,8 +896,8 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     } else if (winType === 'pair') {
       payout = Math.floor((bet * 12) / 10);
     }
-    let bonusApplied = mainBonusType === 'slot_chance' && mainBonusMultiplier > 1;
-    if (mainBonusType === 'slot_payout' && payout > 0) {
+    let bonusApplied = mainBonusType === 'lootbox_chance' && mainBonusMultiplier > 1;
+    if (mainBonusType === 'lootbox_gold' && payout > 0) {
       payout *= mainBonusMultiplier;
       multiplier *= mainBonusMultiplier;
       bonusApplied = mainBonusMultiplier > 1;
@@ -899,47 +952,72 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     } as T;
   }
 
+  if (path === '/api/v1/admin/leaderboard-players' && options.method !== 'POST') return { items: demoLeaderboardPlayers } as T;
+  const hiddenPlayerMatch = path.match(/^\/api\/v1\/admin\/leaderboard-players\/(\d+)\/hide$/);
+  if (hiddenPlayerMatch) {
+    const playerID = Number(hiddenPlayerMatch[1]);
+    const player = demoLeaderboardPlayers.find((item) => item.telegram_id === playerID);
+    if (!player) throw new APIError('Игрок не найден.', 404);
+    player.hidden = options.method !== 'DELETE';
+    return { ok: true, telegram_id: playerID, hidden: player.hidden } as T;
+  }
+
   if (path.startsWith('/api/v1/admin/code-batches?')) return { items: demoBatches } as T;
 
   if (path === '/api/v1/admin/code-batches' && options.method === 'POST') {
     const payload = options.body as CreateBatchInput;
-    const rewardGold = Math.max(0, Math.trunc(payload.reward_gold ?? 0));
-    const creature = payload.reward_creature_slug || undefined;
-    if (rewardGold === 0 && !creature) throw new APIError('Добавь золото и/или выбери иномекона.', 422);
+    const mode = payload.reward_mode ?? 'fixed';
+    const fixedGold = Math.max(0, Math.trunc(payload.reward_gold ?? 0));
+    const creature = mode === 'fixed' ? payload.reward_creature_slug || undefined : undefined;
+    if (mode === 'fixed' && fixedGold === 0 && !creature) throw new APIError('Добавь золото и/или выбери иномекона.', 422);
+    if (mode === 'random' && payload.reward_gold_max < payload.reward_gold_min) throw new APIError('Максимум золота не может быть меньше минимума.', 422);
+    if (mode === 'random' && payload.reward_gold_max < 1 && !payload.reward_creature_rarities.length) throw new APIError('Выбери золото или хотя бы одну редкость иномекона.', 422);
     if (creature && !demoSpecies.some((item) => item.slug === creature && item.is_active)) {
       throw new APIError('Выбранный иномекон не найден в активном каталоге.', 422);
     }
-    const rewardName = payload.reward_name.trim() || 'Пользовательская награда';
-    const rewardRarity = payload.reward_rarity.trim() || 'Обычная';
-    const codes = Array.from({ length: payload.count }, (_, i) => `INOME-DEMO-${demoBatchID}-${String(i + 1).padStart(3, '0')}`);
-
+    const rewardName = mode === 'random' ? 'Случайная награда' : payload.reward_name.trim() || 'Пользовательская награда';
+    const rewardRarity = mode === 'random' ? 'Случайная' : payload.reward_rarity.trim() || 'Обычная';
+    const batchID = demoBatchID++;
+    const codes = Array.from({ length: payload.count }, (_, i) => `INOME-DEMO-${batchID}-${String(i + 1).padStart(3, '0')}`);
+    const codeRewards = codes.map((code) => {
+      let rewardGold = fixedGold;
+      let rewardCreatureSlug = creature;
+      let individualName = rewardName;
+      let individualRarity = rewardRarity;
+      if (mode === 'random') {
+        const min = Math.max(0, Math.trunc(payload.reward_gold_min ?? 0));
+        const max = Math.max(min, Math.trunc(payload.reward_gold_max ?? min));
+        rewardGold = Math.floor(Math.random() * (max - min + 1)) + min;
+        const available = demoSpecies.filter((item) => item.is_active && payload.reward_creature_rarities.includes(item.rarity));
+        if (available.length) {
+          const weights: Record<Rarity, number> = { common: 60, rare: 25, epic: 10, legendary: 4, mythic: 1 };
+          const weighted = available.flatMap((species) => Array.from({ length: weights[species.rarity] }, () => species));
+          const picked = weighted[Math.floor(Math.random() * weighted.length)];
+          rewardCreatureSlug = picked.slug;
+          individualName = `Коллекционная награда · ${picked.name}`;
+          individualRarity = picked.rarity;
+        }
+      }
+      return { code, reward_gold: rewardGold, reward_creature_slug: rewardCreatureSlug, reward_name: individualName, reward_rarity: individualRarity };
+    });
     const batch: Batch = {
-      id: demoBatchID++,
-      label: payload.label,
-      reward_name: rewardName,
-      reward_rarity: rewardRarity,
-      reward_gold: rewardGold,
-      reward_creature_slug: creature,
-      created_by: 100000001,
-      created_at: new Date().toISOString(),
-      expires_at: payload.expires_in_days
-        ? new Date(Date.now() + payload.expires_in_days * 86_400_000).toISOString()
-        : undefined,
-      code_count: payload.count,
-      redeemed_count: 0,
+      id: batchID, label: payload.label, reward_name: rewardName, reward_rarity: rewardRarity,
+      reward_gold: mode === 'random' ? payload.reward_gold_max : fixedGold,
+      reward_mode: mode, reward_gold_min: mode === 'random' ? payload.reward_gold_min : fixedGold,
+      reward_gold_max: mode === 'random' ? payload.reward_gold_max : fixedGold,
+      reward_creature_rarities: mode === 'random' ? [...payload.reward_creature_rarities] : [],
+      reward_creature_slug: creature, created_by: 100000001, created_at: new Date().toISOString(),
+      expires_at: payload.expires_in_days ? new Date(Date.now() + payload.expires_in_days * 86_400_000).toISOString() : undefined,
+      code_count: payload.count, redeemed_count: 0,
     };
-
     demoBatches = [batch, ...demoBatches];
+    demoBatchCodeSnapshots.set(batchID, codeRewards);
     return {
-      batch_id: batch.id,
-      label: batch.label,
-      count: payload.count,
-      reward_name: rewardName,
-      reward_rarity: rewardRarity,
-      reward_gold: rewardGold,
-      reward_creature_slug: creature,
-      expires_at: batch.expires_at,
-      codes,
+      batch_id: batch.id, label: batch.label, count: payload.count, reward_mode: mode,
+      reward_name: rewardName, reward_rarity: rewardRarity, reward_gold: batch.reward_gold,
+      reward_gold_min: batch.reward_gold_min, reward_gold_max: batch.reward_gold_max,
+      reward_creature_rarities: batch.reward_creature_rarities, reward_creature_slug: creature,
+      expires_at: batch.expires_at, codes, rewards: codeRewards.map(({ code: _code, ...reward }) => reward),
     } as T;
   }
 
@@ -949,7 +1027,7 @@ async function demoRequest<T>(path: string, options: RequestOptions): Promise<T>
     if (!batch) throw new APIError('Партия не найдена.', 404);
     return {
       batch_id: batch.id,
-      codes: Array.from({ length: batch.code_count }, (_, index) => ({
+      codes: demoBatchCodeSnapshots.get(batch.id) ?? Array.from({ length: batch.code_count }, (_, index) => ({
         code: `INOME-DEMO-${batch.id}-${String(index + 1).padStart(3, '0')}`,
       })),
       unavailable_count: 0,

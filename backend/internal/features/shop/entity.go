@@ -42,8 +42,8 @@ type Egg struct {
 }
 
 type ShopData struct {
-	EggOffers []EggOffer `json:"lootboxes"`
-	Eggs      []Egg      `json:"inventory"`
+	EggOffers []EggOffer `json:"egg_offers"`
+	Eggs      []Egg      `json:"eggs"`
 }
 
 type BuyEggInput struct {
@@ -51,8 +51,15 @@ type BuyEggInput struct {
 }
 
 type BuyEggResult struct {
-	Egg         Egg   `json:"lootbox"`
-	GoldBalance int64 `json:"gold_balance"`
+	Egg           Egg    `json:"egg"`
+	GoldBalance   int64  `json:"gold_balance"`
+	CreatureID    int64  `json:"creature_id"`
+	SpeciesSlug   string `json:"species_slug"`
+	Name          string `json:"name"`
+	ImageURL      string `json:"image_url"`
+	Rarity        string `json:"rarity"`
+	SellPriceGold int64  `json:"sell_price_gold"`
+	GoldBonus     int64  `json:"gold_bonus"`
 }
 
 type HatchResult struct {

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 )
@@ -99,7 +100,7 @@ func bonusAttempts(bonus mainBonus) int {
 	if bonus.Multiplier > 10 {
 		return 10
 	}
-	return bonus.Multiplier
+	return int(math.Round(bonus.Multiplier))
 }
 
 // Creature-stake rules are intentionally item-based: a miss loses the selected
@@ -173,7 +174,7 @@ func (s *Store) spinGold(ctx context.Context, telegramID, bet int64) (SlotSpinRe
 	}
 	bonusApplied := false
 	if bonus.Type == string(MainBonusSlotPayout) && outcome.payout > 0 {
-		outcome.payout *= int64(bonus.Multiplier)
+		outcome.payout = int64(math.Round(float64(outcome.payout) * bonus.Multiplier))
 		outcome.multiplier *= float64(bonus.Multiplier)
 		bonusApplied = bonus.Multiplier > 1
 	} else if bonus.Type == string(MainBonusSlotChance) && bonus.Multiplier > 1 {

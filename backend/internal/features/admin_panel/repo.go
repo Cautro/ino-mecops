@@ -10,4 +10,7 @@ type Repository interface {
 	ActiveSpeciesByRarities(ctx context.Context, rarities []string) ([]ActiveSpeciesOption, error)
 	RevokeBatch(ctx context.Context, id int64) error
 	DeleteBatch(ctx context.Context, id int64) error
+	ListLeaderboardPlayers(ctx context.Context) ([]LeaderboardPlayer, error)
+	SetLeaderboardHidden(ctx context.Context, playerTelegramID, adminTelegramID int64) error
+	RemoveLeaderboardHidden(ctx context.Context, playerTelegramID int64) error
 }

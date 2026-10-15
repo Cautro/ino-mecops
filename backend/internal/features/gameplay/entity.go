@@ -6,21 +6,21 @@ type MainBonusType string
 
 const (
 	MainBonusNone          MainBonusType = "none"
-	MainBonusSlotChance    MainBonusType = "slot_chance"
-	MainBonusSlotPayout    MainBonusType = "slot_payout"
+	MainBonusSlotChance    MainBonusType = "lootbox_chance"
+	MainBonusSlotPayout    MainBonusType = "lootbox_gold"
 	MainBonusPassiveIncome MainBonusType = "passive_income"
 )
 
 type MainSlotOption struct {
-	CreatureID         int64  `json:"creature_id"`
-	SpeciesSlug        string `json:"species_slug"`
-	Name               string `json:"name"`
-	ImageURL           string `json:"image_url"`
-	Rarity             string `json:"rarity"`
-	PassiveGoldPerHour int64  `json:"passive_gold_per_hour"`
-	BonusType          string `json:"bonus_type"`
-	BonusMultiplier    int    `json:"bonus_multiplier"`
-	Selected           bool   `json:"selected"`
+	CreatureID         int64   `json:"creature_id"`
+	SpeciesSlug        string  `json:"species_slug"`
+	Name               string  `json:"name"`
+	ImageURL           string  `json:"image_url"`
+	Rarity             string  `json:"rarity"`
+	PassiveGoldPerHour float64 `json:"passive_gold_per_hour"`
+	BonusType          string  `json:"bonus_type"`
+	BonusMultiplier    float64 `json:"bonus_multiplier"`
+	Selected           bool    `json:"selected"`
 }
 
 type MainSlotState struct {
@@ -34,10 +34,10 @@ type SetMainSlotInput struct {
 }
 
 type CollectionLeaderboardEntry struct {
-	Rank               int    `json:"rank"`
-	Name               string `json:"name"`
-	CreatureCount      int    `json:"creature_count"`
-	PassiveGoldPerHour int64  `json:"passive_gold_per_hour"`
+	Rank               int     `json:"rank"`
+	Name               string  `json:"name"`
+	CreatureCount      int     `json:"creature_count"`
+	PassiveGoldPerHour float64 `json:"passive_gold_per_hour"`
 }
 
 type SlotLossLeaderboardEntry struct {
@@ -67,7 +67,7 @@ type Overview struct {
 	FirstName          string    `json:"first_name"`
 	Gold               int64     `json:"gold"`
 	CreatedAt          time.Time `json:"created_at"`
-	PassiveGoldPerHour int64     `json:"passive_gold_per_hour"`
+	PassiveGoldPerHour float64   `json:"passive_gold_per_hour"`
 	PassiveGoldClaimed int64     `json:"passive_gold_claimed"`
 	LastPassiveClaimAt time.Time `json:"last_passive_claim_at"`
 	OwnedCreatureCount int       `json:"owned_creature_count"`
@@ -94,7 +94,7 @@ type SlotSpinResult struct {
 	WinType             string               `json:"win_type"`
 	Multiplier          float64              `json:"multiplier"`
 	MainBonusType       string               `json:"main_bonus_type,omitempty"`
-	MainBonusMultiplier int                  `json:"main_bonus_multiplier,omitempty"`
+	MainBonusMultiplier float64              `json:"main_bonus_multiplier,omitempty"`
 	BonusApplied        bool                 `json:"bonus_applied,omitempty"`
 	CreatureSlug        string               `json:"creature_slug,omitempty"`
 	CreatureName        string               `json:"creature_name,omitempty"`

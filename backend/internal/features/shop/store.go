@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -324,20 +325,63 @@ func (s *Store) BuyEgg(ctx context.Context, telegramID int64, rarity string) (Bu
 	if err := tx.QueryRowContext(ctx, `UPDATE players SET gold=gold-$2, lootbox_gold_spent_total=lootbox_gold_spent_total+$2, updated_at=clock_timestamp() WHERE telegram_id=$1 RETURNING gold`, telegramID, price).Scan(&balance); err != nil {
 		return BuyEggResult{}, err
 	}
-	var egg Egg
-	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO player_eggs (owner_telegram_id, rarity, price_gold)
-		VALUES ($1,$2,$3) RETURNING id, rarity, price_gold, purchased_at
-	`, telegramID, rarity, price).Scan(&egg.ID, &egg.Rarity, &egg.PriceGold, &egg.PurchasedAt); err != nil {
-		return BuyEggResult{}, err
-	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO wallet_transactions (player_telegram_id, delta_gold, transaction_type) VALUES ($1,$2,'lootbox_purchase')`, telegramID, -price); err != nil {
 		return BuyEggResult{}, err
 	}
+
+	// Opening happens inside the same transaction as purchase: a successful
+	// purchase can never leave the user with a paid but unopened container.
+	bonusType, bonusMultiplier, err := selectedContainerBonusTx(ctx, tx, telegramID)
+	if err != nil {
+		return BuyEggResult{}, err
+	}
+	chanceMultiplier := 1.0
+	if bonusType == "lootbox_chance" {
+		chanceMultiplier = bonusMultiplier
+	}
+	speciesRarity, err := chooseMysteryRarity(ctx, tx, chanceMultiplier)
+	if err != nil {
+		return BuyEggResult{}, err
+	}
+	result := BuyEggResult{
+		Egg:         Egg{Rarity: rarity, PriceGold: price, PurchasedAt: time.Now().UTC()},
+		GoldBalance: balance,
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT slug, name, image_url, rarity, sell_price_gold
+		FROM creature_species WHERE rarity=$1 AND is_active=TRUE
+		ORDER BY random() LIMIT 1
+	`, speciesRarity).Scan(&result.SpeciesSlug, &result.Name, &result.ImageURL, &result.Rarity, &result.SellPriceGold); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return BuyEggResult{}, ErrSpeciesUnavailable
+		}
+		return BuyEggResult{}, err
+	}
+	if err := tx.QueryRowContext(ctx, `INSERT INTO player_creatures (owner_telegram_id, species_slug) VALUES ($1,$2) RETURNING id`, telegramID, result.SpeciesSlug).Scan(&result.CreatureID); err != nil {
+		return BuyEggResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO player_discovered_species (player_telegram_id, species_slug) VALUES ($1,$2) ON CONFLICT DO NOTHING`, telegramID, result.SpeciesSlug); err != nil {
+		return BuyEggResult{}, err
+	}
+	if bonusType == "lootbox_gold" && bonusMultiplier > 1 {
+		result.GoldBonus = int64(math.Floor(float64(price) * (bonusMultiplier - 1) / 10))
+		if result.GoldBonus > 0 {
+			if err := tx.QueryRowContext(ctx, `UPDATE players SET gold=gold+$2, updated_at=clock_timestamp() WHERE telegram_id=$1 RETURNING gold`, telegramID, result.GoldBonus).Scan(&balance); err != nil {
+				return BuyEggResult{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO wallet_transactions (player_telegram_id, delta_gold, transaction_type) VALUES ($1,$2,'lootbox_gold_bonus')`, telegramID, result.GoldBonus); err != nil {
+				return BuyEggResult{}, err
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO lootbox_open_events (player_telegram_id, species_slug, result_rarity, container_price_gold, bonus_gold) VALUES ($1,$2,$3,$4,$5)`, telegramID, result.SpeciesSlug, result.Rarity, price, result.GoldBonus); err != nil {
+		return BuyEggResult{}, err
+	}
+	result.GoldBalance = balance
 	if err := tx.Commit(); err != nil {
 		return BuyEggResult{}, err
 	}
-	return BuyEggResult{Egg: egg, GoldBalance: balance}, nil
+	return result, nil
 }
 
 func selectedContainerBonus(ctx context.Context, db *sql.DB, telegramID int64) (string, float64, error) {

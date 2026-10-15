@@ -36,8 +36,8 @@ func (s *Store) Overview(ctx context.Context, telegramID int64) (Overview, error
 		out.Username = username.String
 	}
 	out.CreatedAt, out.LastPassiveClaimAt = created, last
-	var basePassiveRate int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(s.passive_gold_per_hour),0)::bigint, COUNT(pc.id)::int FROM player_creatures pc JOIN creature_species s ON s.slug=pc.species_slug WHERE pc.owner_telegram_id=$1`, telegramID).Scan(&basePassiveRate, &out.OwnedCreatureCount); err != nil {
+	var basePassiveRate float64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(s.passive_gold_per_hour),0)::double precision, COUNT(pc.id)::int FROM player_creatures pc JOIN creature_species s ON s.slug=pc.species_slug WHERE pc.owner_telegram_id=$1`, telegramID).Scan(&basePassiveRate, &out.OwnedCreatureCount); err != nil {
 		return Overview{}, err
 	}
 	bonus, err := currentMainBonus(ctx, tx, telegramID)
@@ -46,7 +46,7 @@ func (s *Store) Overview(ctx context.Context, telegramID int64) (Overview, error
 	}
 	out.PassiveGoldPerHour = basePassiveRate
 	if bonus.Type == string(MainBonusPassiveIncome) {
-		out.PassiveGoldPerHour = basePassiveRate * int64(bonus.Multiplier)
+		out.PassiveGoldPerHour = basePassiveRate * bonus.Multiplier
 	}
 	var earnedText string
 	if err := tx.QueryRowContext(ctx, `

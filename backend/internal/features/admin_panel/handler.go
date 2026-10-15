@@ -142,3 +142,55 @@ func (h *Handler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "batch_id": id})
 }
+
+func (h *Handler) ListLeaderboardPlayers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authorized(w, r); !ok {
+		return
+	}
+	items, err := h.useCase.ListLeaderboardPlayers(r.Context())
+	if err != nil {
+		log.Printf("admin: list leaderboard players: %v", err)
+		services.WriteError(w, http.StatusInternalServerError, "leaderboard_players_failed", "Не удалось загрузить список игроков.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) HideLeaderboardPlayer(w http.ResponseWriter, r *http.Request) {
+	admin, ok := h.authorized(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || id <= 0 {
+		services.WriteError(w, http.StatusBadRequest, "invalid_player_id", "Некорректный Telegram ID игрока.")
+		return
+	}
+	if err := h.useCase.HideLeaderboardPlayer(r.Context(), id, admin.ID); err != nil {
+		if errors.Is(err, ErrLeaderboardPlayerNotFound) {
+			services.WriteError(w, http.StatusNotFound, "leaderboard_player_not_found", "Игрок не найден.")
+			return
+		}
+		log.Printf("admin: hide leaderboard player id=%d: %v", id, err)
+		services.WriteError(w, http.StatusInternalServerError, "leaderboard_hide_failed", "Не удалось скрыть игрока из общего рейтинга.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "telegram_id": id, "hidden": true})
+}
+
+func (h *Handler) ShowLeaderboardPlayer(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authorized(w, r); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || id <= 0 {
+		services.WriteError(w, http.StatusBadRequest, "invalid_player_id", "Некорректный Telegram ID игрока.")
+		return
+	}
+	if err := h.useCase.ShowLeaderboardPlayer(r.Context(), id); err != nil {
+		log.Printf("admin: show leaderboard player id=%d: %v", id, err)
+		services.WriteError(w, http.StatusInternalServerError, "leaderboard_show_failed", "Не удалось вернуть игрока в общий рейтинг.")
+		return
+	}
+	services.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "telegram_id": id, "hidden": false})
+}

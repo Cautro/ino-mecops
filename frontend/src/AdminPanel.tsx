@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
+import QRCode from 'qrcode';
 import { APIError, api } from './api';
-import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggKind, EggProduct, EggProductUpdateInput, MainBonusType, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
+import type { Batch, BatchCodesResponse, CreateBatchInput, CreatedBatch, EggKind, EggProduct, EggProductUpdateInput, LeaderboardPlayer, MainBonusType, Rarity, Species, SpeciesInput, SpeciesUpdateInput } from './api';
 
 type AdminPanelProps = {
   initData: string;
   onCatalogChanged: () => Promise<void>;
 };
-type Section = 'species' | 'eggs' | 'batches';
+type Section = 'species' | 'eggs' | 'batches' | 'leaderboard';
+type PrintCard = { code: string; bot_qr: string; channel_qr: string };
 
 const RARITY_OPTIONS: { value: Rarity; label: string }[] = [
   { value: 'common', label: 'Обычная' },
@@ -22,7 +24,8 @@ const blankSpecies = (abilityID = 1): SpeciesInput => ({
   health: 100, damage: 10, crit_chance: 5, ability_id: abilityID, is_featured: false, main_bonus_type: 'none', main_bonus_multiplier: 1,
 });
 const blankBatch = (): CreateBatchInput => ({
-  label: '', count: 20, reward_name: '', reward_rarity: 'Обычная', reward_gold: 50,
+  label: '', count: 20, reward_mode: 'random', reward_name: '', reward_rarity: 'Обычная', reward_gold: 0,
+  reward_gold_min: 50, reward_gold_max: 250, reward_creature_rarities: ['common', 'rare', 'epic', 'legendary', 'mythic'],
   reward_creature_slug: '', expires_in_days: 0,
 });
 
@@ -35,6 +38,9 @@ function prettyDate(value?: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium' }).format(date);
 }
+function formatStat(value: number): string {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(value);
+}
 function creatureName(species: Species[], slug?: string): string {
   if (!slug) return 'Без иномекона';
   return species.find((item) => item.slug === slug)?.name ?? slug;
@@ -45,6 +51,8 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   const [species, setSpecies] = useState<Species[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [eggProducts, setEggProducts] = useState<EggProduct[]>([]);
+  const [leaderboardPlayers, setLeaderboardPlayers] = useState<LeaderboardPlayer[]>([]);
+  const [leaderboardFilter, setLeaderboardFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -56,17 +64,20 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   const [batchForm, setBatchForm] = useState<CreateBatchInput>(blankBatch());
   const [createdBatch, setCreatedBatch] = useState<CreatedBatch | null>(null);
   const [viewCodes, setViewCodes] = useState<BatchCodesResponse | null>(null);
+  const [printCards, setPrintCards] = useState<PrintCard[]>([]);
+  const [autoPrint, setAutoPrint] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [speciesResponse, batchResponse, eggResponse] = await Promise.all([
-        api.listAdminSpecies(initData), api.listBatches(initData), api.listAdminEggProducts(initData),
+      const [speciesResponse, batchResponse, eggResponse, leaderboardResponse] = await Promise.all([
+        api.listAdminSpecies(initData), api.listBatches(initData), api.listAdminEggProducts(initData), api.adminLeaderboardPlayers(initData),
       ]);
       const loadedSpecies = speciesResponse.items ?? [];
       setSpecies(loadedSpecies);
       setBatches(batchResponse.items ?? []);
       setEggProducts(eggResponse.items ?? []);
+      setLeaderboardPlayers(leaderboardResponse.items ?? []);
       const abilityID = loadedSpecies[0]?.ability_id ?? 1;
       setSpeciesForm((current) => current.ability_id ? current : { ...current, ability_id: abilityID });
     } catch (caught) { setError(explain(caught)); }
@@ -74,6 +85,15 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   }, [initData]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!autoPrint || printCards.length === 0) return;
+    const timer = window.setTimeout(() => {
+      window.print();
+      setAutoPrint(false);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [autoPrint, printCards]);
 
   const resetSpeciesForm = () => {
     setEditingSpeciesID(null);
@@ -134,7 +154,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     try {
       const result = await api.uploadImage(initData, file);
       setEggProducts((items) => items.map((item) => item.rarity === rarity ? { ...item, image_url: result.image_url } : item));
-      setSuccess('Изображение яйца загружено. Нажми «Сохранить яйцо».');
+      setSuccess('Изображение контейнера загружено. Нажми «Сохранить контейнер».');
     } catch (caught) { setError(explain(caught)); }
     finally { setImageBusy(false); }
   };
@@ -151,15 +171,67 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
     finally { setBusy(false); }
   };
 
+  const preparePrint = async (codes: string[]) => {
+    const usableCodes = codes.filter((value) => value.trim().length > 0);
+    if (!usableCodes.length) throw new Error('В партии нет кодов для печати.');
+    const botUsername = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? '').trim().replace(/^@/, '');
+    if (!botUsername) throw new Error('Не задан VITE_TELEGRAM_BOT_USERNAME во frontend env.');
+    const subscription = await api.subscriptionStatus(initData);
+    const channelURL = subscription.url?.trim();
+    if (!channelURL || !/^https:\/\//i.test(channelURL)) throw new Error('В SUBSCRIPTION_URL не задана HTTPS-ссылка на основной канал.');
+    const qrOptions = { width: 640, margin: 1, errorCorrectionLevel: 'H' as const };
+    const channelQR = await QRCode.toDataURL(channelURL, qrOptions);
+    const cards = await Promise.all(usableCodes.map(async (code) => ({
+      code,
+      bot_qr: await QRCode.toDataURL(`https://t.me/${botUsername}?startapp=${encodeURIComponent(code)}`, qrOptions),
+      channel_qr: channelQR,
+    })));
+    setPrintCards(cards);
+    setAutoPrint(true);
+  };
+
   const createBatch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError(''); setSuccess(''); setCreatedBatch(null);
-    if (batchForm.reward_gold < 0 || (batchForm.reward_gold === 0 && !batchForm.reward_creature_slug)) {
+    if (batchForm.reward_mode === 'fixed' && (batchForm.reward_gold < 0 || (batchForm.reward_gold === 0 && !batchForm.reward_creature_slug))) {
       setError('Награда должна содержать золото и/или одного иномекона.'); setBusy(false); return;
     }
+    if (batchForm.reward_mode === 'random' && batchForm.reward_gold_max < 1 && batchForm.reward_creature_rarities.length === 0) {
+      setError('Укажи ненулевой диапазон золота или выбери хотя бы одну редкость иномекона.'); setBusy(false); return;
+    }
+    if (batchForm.reward_mode === 'random' && batchForm.reward_gold_max < batchForm.reward_gold_min) {
+      setError('Максимум золота не может быть меньше минимума.'); setBusy(false); return;
+    }
     try {
-      const created = await api.createBatch(initData, { ...batchForm, reward_creature_slug: batchForm.reward_creature_slug || undefined });
-      setCreatedBatch(created); setSuccess(`Создана партия «${created.label}» на ${created.count} кодов.`);
+      const payload: CreateBatchInput = { ...batchForm, reward_creature_slug: batchForm.reward_mode === 'fixed' ? batchForm.reward_creature_slug || undefined : undefined };
+      const created = await api.createBatch(initData, payload);
+      setCreatedBatch(created);
+      setSuccess(`Создана партия «${created.label}» на ${created.count} кодов. Открывается макет печати QR-карточек.`);
       setBatchForm((value) => ({ ...value, label: '' }));
+      await refresh();
+      await preparePrint(created.codes);
+    } catch (caught) { setError(explain(caught)); }
+    finally { setBusy(false); }
+  };
+
+  const printBatch = async (id: number) => {
+    setBusy(true); setError(''); setSuccess('');
+    try {
+      const result = await api.batchCodes(initData, id);
+      setViewCodes(result);
+      const unredeemed: string[] = result.codes.flatMap((item) => (!item.redeemed_at && item.code) ? [item.code] : []);
+      if (!unredeemed.length) throw new Error('В этой партии не осталось неактивированных кодов для печати.');
+      await preparePrint(unredeemed);
+      setSuccess(`Подготовлено QR-карточек: ${unredeemed.length}.`);
+    } catch (caught) { setError(explain(caught)); }
+    finally { setBusy(false); }
+  };
+
+  const setLeaderboardVisibility = async (item: LeaderboardPlayer, hide: boolean) => {
+    setBusy(true); setError(''); setSuccess('');
+    try {
+      if (hide) await api.hideLeaderboardPlayer(initData, item.telegram_id);
+      else await api.showLeaderboardPlayer(initData, item.telegram_id);
+      setSuccess(hide ? `${item.name} скрыт из лидерборда для других игроков.` : `${item.name} снова виден в лидерборде всем игрокам.`);
       await refresh();
     } catch (caught) { setError(explain(caught)); }
     finally { setBusy(false); }
@@ -195,7 +267,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
   return (
     <section className="subpage admin-page">
       <div className="subpage-heading">
-        <div><p className="eyebrow">УПРАВЛЕНИЕ ПРОЕКТОМ</p><h1>Админ-панель</h1><p className="page-lead">Каталог существ, оформление яиц и пользовательские награды.</p></div>
+        <div><p className="eyebrow">УПРАВЛЕНИЕ ПРОЕКТОМ</p><h1>Админ-панель</h1><p className="page-lead">Каталог иномеконов, контейнеры, QR-коды и управление рейтингом.</p></div>
         <button className="button button--secondary" onClick={() => void refresh()} disabled={busy || loading}>↻ Обновить</button>
       </div>
 
@@ -207,8 +279,9 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
 
       <nav className="admin-tabs" aria-label="Разделы панели">
         <button className={section === 'species' ? 'is-active' : ''} onClick={() => setSection('species')}>Иномеконы</button>
-        <button className={section === 'eggs' ? 'is-active' : ''} onClick={() => setSection('eggs')}>Яйца магазина</button>
-        <button className={section === 'batches' ? 'is-active' : ''} onClick={() => setSection('batches')}>Награды и коды</button>
+        <button className={section === 'eggs' ? 'is-active' : ''} onClick={() => setSection('eggs')}>Контейнер магазина</button>
+        <button className={section === 'batches' ? 'is-active' : ''} onClick={() => setSection('batches')}>Награды и QR</button>
+        <button className={section === 'leaderboard' ? 'is-active' : ''} onClick={() => setSection('leaderboard')}>Лидерборд</button>
       </nav>
 
       {error && <div className="admin-message admin-message--error" role="alert">{error}</div>}
@@ -222,9 +295,12 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
               {field('Системный ID (slug)', speciesForm.slug, (v) => setSpeciesForm((s) => ({ ...s, slug: v.toLowerCase().replace(/[^a-z0-9-]/g, '') })), { required: editingSpeciesID === null, disabled: editingSpeciesID !== null, placeholder: 'ino-sprout' })}
               {field('Название', speciesForm.name, (v) => setSpeciesForm((s) => ({ ...s, name: v })), { required: true })}
               <label className="field"><span className="field-label">Редкость иномекона</span><select value={speciesForm.rarity} onChange={(e) => setSpeciesForm((s) => ({ ...s, rarity: e.target.value as Rarity }))}>{RARITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-              <label className="field"><span className="field-label">Бонус в основном слоте</span><select value={speciesForm.main_bonus_type} onChange={(e) => setSpeciesForm((s) => ({ ...s, main_bonus_type: e.target.value as MainBonusType }))}><option value="none">Без бонуса</option><option value="slot_chance">Повышенный шанс барабана</option><option value="slot_payout">Увеличенная выплата барабана</option><option value="passive_income">Увеличенный пассивный доход</option></select></label>
-              <label className="field"><span className="field-label">Множитель бонуса (×)</span><input type="number" min={1} max={10} step={1} required value={speciesForm.main_bonus_multiplier} onChange={(e) => setSpeciesForm((s) => ({ ...s, main_bonus_multiplier: Number(e.target.value) }))} /><small>Целое число от 1 до 10. Для шанса барабана ×5 означает 5 попыток, из которых выбирается лучший серверный результат.</small></label>
-              {field('Пассивный доход (золота/час)', speciesForm.passive_gold_per_hour, (v) => setSpeciesForm((s) => ({ ...s, passive_gold_per_hour: Number(v) })), { type: 'number', min: 0, max: 10000000, required: true })}
+              <label className="field"><span className="field-label">Бонус в основном слоте</span><select value={speciesForm.main_bonus_type} onChange={(e) => setSpeciesForm((s) => ({ ...s, main_bonus_type: e.target.value as MainBonusType }))}><option value="none">Без бонуса</option><option value="lootbox_chance">Повышенный шанс редкости контейнера</option><option value="lootbox_gold">Бонус золота за контейнер</option><option value="passive_income">Увеличенный пассивный доход</option></select></label>
+              <label className="field"><span className="field-label">Множитель бонуса (×)</span><input type="number" min={1} max={10} step={0.001} required value={speciesForm.main_bonus_multiplier} onChange={(e) => setSpeciesForm((s) => ({ ...s, main_bonus_multiplier: Number(e.target.value) }))} /><small>Дробное значение от 1 до 10. Для контейнеров дробный множитель поддерживается сервером.</small></label>
+              {field('Пассивный доход (золота/час)', speciesForm.passive_gold_per_hour, (v) => setSpeciesForm((s) => ({ ...s, passive_gold_per_hour: Number(v) })), { type: 'number', min: 0, max: 10000000, step: 0.0001, required: true })}
+              {field('Здоровье', speciesForm.health, (v) => setSpeciesForm((s) => ({ ...s, health: Number(v) })), { type: 'number', min: 1, max: 1000000, step: 0.001, required: true })}
+              {field('Урон', speciesForm.damage, (v) => setSpeciesForm((s) => ({ ...s, damage: Number(v) })), { type: 'number', min: 0, max: 1000000, step: 0.001, required: true })}
+              {field('Критический шанс (%)', speciesForm.crit_chance, (v) => setSpeciesForm((s) => ({ ...s, crit_chance: Number(v) })), { type: 'number', min: 0, max: 100, step: 0.001, required: true })}
               {field('Цена продажи (золота)', speciesForm.sell_price_gold, (v) => setSpeciesForm((s) => ({ ...s, sell_price_gold: Number(v) })), { type: 'number', min: 0, max: 1000000000, required: true })}
               <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={speciesForm.description} onChange={(e) => setSpeciesForm((s) => ({ ...s, description: e.target.value }))} rows={3} maxLength={1000} /></label>
               <label className="field admin-field-wide"><span className="field-label">Изображение</span><input value={speciesForm.image_url} onChange={(e) => setSpeciesForm((s) => ({ ...s, image_url: e.target.value }))} placeholder="Ссылка или загрузка файла ниже" /><input className="admin-file-input" type="file" accept="image/png,image/jpeg,image/gif" disabled={imageBusy} onChange={(e) => { const file = e.target.files?.[0]; void uploadSpeciesImage(file); e.currentTarget.value = ''; }} /><small>{imageBusy ? 'Загружаем изображение…' : 'PNG, JPEG или GIF, до 5 МБ. Файл сохраняется на сервере.'}</small>{speciesForm.image_url && <img src={speciesForm.image_url} alt="Предпросмотр иномекона" className="admin-image-preview" />}</label>
@@ -234,7 +310,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
           <div className="admin-list">
             {species.map((item) => <article className={`surface admin-item ${!item.is_active ? 'admin-item--archived' : ''}`} key={item.id}>
               {item.image_url ? <img src={item.image_url} alt="" className="admin-item-image" /> : <div className="admin-item-image admin-item-image--empty">◇</div>}
-              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{item.passive_gold_per_hour} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small><small>Бонус основного слота: {item.main_bonus_type === 'slot_chance' ? `шанс ×${item.main_bonus_multiplier}` : item.main_bonus_type === 'slot_payout' ? `выплата ×${item.main_bonus_multiplier}` : item.main_bonus_type === 'passive_income' ? `пассивный доход ×${item.main_bonus_multiplier}` : 'нет'}</small>{item.description && <p>{item.description}</p>}</div>
+              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.is_active ? 'is-active' : ''}`}>{item.is_active ? 'Активен' : 'В архиве'}</span></div><p>{item.slug} · {RARITY_OPTIONS.find((r) => r.value === item.rarity)?.label ?? item.rarity}</p><small>{formatStat(item.passive_gold_per_hour)} золота/час · продажа: {item.sell_price_gold.toLocaleString('ru-RU')} золота</small><small>Бонус основного слота: {item.main_bonus_type === 'lootbox_chance' ? `шанс ×${formatStat(item.main_bonus_multiplier)}` : item.main_bonus_type === 'lootbox_gold' ? `выплата ×${formatStat(item.main_bonus_multiplier)}` : item.main_bonus_type === 'passive_income' ? `пассивный доход ×${formatStat(item.main_bonus_multiplier)}` : 'нет'}</small>{item.description && <p>{item.description}</p>}</div>
               <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => editSpecies(item)}>Изменить</button><button className="button button--danger button--small" onClick={() => void deleteSpecies(item)} disabled={busy}>Удалить навсегда</button></div>
             </article>)}
             {!species.length && <div className="surface admin-empty">Каталог пока пуст.</div>}
@@ -242,15 +318,15 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
         </>}
 
         {section === 'eggs' && <>
-          <div className="admin-section-heading"><div><h2>Оформление и цены яиц</h2><p>Настраивай название, цену, картинку, описание и доступность каждого яйца. Цена применяется к новым покупкам; купленные яйца остаются в инвентаре.</p></div></div>
+          <div className="admin-section-heading"><div><h2>Оформление и цена контейнера</h2><p>Настраивай название, цену, картинку, описание и доступность контейнера. Покупка сразу выдаёт случайного иномекона; отдельное открытие не требуется.</p></div></div>
           <div className="egg-admin-grid">
             {eggProducts.map((egg) => <form className="surface egg-admin-card" key={egg.rarity} onSubmit={(event) => { event.preventDefault(); void saveEggProduct(egg); }}>
               <div className="admin-form-heading"><div><h3>{egg.label}</h3><span className={`rarity-tag rarity-tag--${egg.rarity}`}>{egg.rarity === 'mystery' ? 'Загадочное' : RARITY_OPTIONS.find((item) => item.value === egg.rarity)?.label ?? egg.rarity}</span></div><label className="admin-inline-toggle"><input type="checkbox" checked={egg.is_active} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, is_active: event.target.checked } : item))} /> Доступно</label></div>
               <div className="egg-admin-preview">{egg.image_url ? <img src={egg.image_url} alt={egg.label} /> : <span>🥚</span>}</div>
               <div className="admin-form-grid">
-                {field('Название яйца', egg.label, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, label: v } : item)), { required: true, maxLength: 80 })}
+                {field('Название контейнера', egg.label, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, label: v } : item)), { required: true, maxLength: 80 })}
                 {field('Цена (золота)', egg.price_gold, (v) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, price_gold: Number(v) } : item)), { type: 'number', min: 1, max: 100000000, required: true })}
-                <label className="field admin-field-wide"><span className="field-label">URL картинки</span><input value={egg.image_url} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, image_url: event.target.value } : item))} placeholder="/uploads/egg.png или https://…" /><input className="admin-file-input" type="file" accept="image/png,image/jpeg,image/gif" disabled={imageBusy} onChange={(event) => { const file = event.target.files?.[0]; void uploadEggImage(egg.rarity, file); event.currentTarget.value = ''; }} /><small>{imageBusy ? 'Загружаем изображение…' : 'PNG, JPEG или GIF до 5 МБ. Загрузка сохранит файл, затем нажми «Сохранить яйцо».'}</small></label>
+                <label className="field admin-field-wide"><span className="field-label">URL картинки</span><input value={egg.image_url} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, image_url: event.target.value } : item))} placeholder="/uploads/container.png или https://…" /><input className="admin-file-input" type="file" accept="image/png,image/jpeg,image/gif" disabled={imageBusy} onChange={(event) => { const file = event.target.files?.[0]; void uploadEggImage(egg.rarity, file); event.currentTarget.value = ''; }} /><small>{imageBusy ? 'Загружаем изображение…' : 'PNG, JPEG или GIF до 5 МБ. Загрузка сохранит файл, затем нажми «Сохранить контейнер».'}</small></label>
                 <label className="field admin-field-wide"><span className="field-label">Описание</span><textarea value={egg.description} rows={3} maxLength={500} onChange={(event) => setEggProducts((items) => items.map((item) => item.rarity === egg.rarity ? { ...item, description: event.target.value } : item))} /></label>
                 {egg.rarity === 'mystery' && <div className="mystery-egg-chance-editor admin-field-wide">
                   <div><strong>Шансы редкостей</strong><small>Сумма должна быть ровно 100%. У мифической редкости всегда остаётся шанс от 1%.</small></div>
@@ -260,7 +336,7 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
                   <small>Если у редкости нет активных иномеконов, её шанс перераспределяется между доступными. Если все заданные шансы приходятся на отсутствующие редкости, доступные редкости получают равные шансы.</small>
                 </div>}
               </div>
-              <div className="admin-form-actions"><button className="button button--primary" disabled={busy || imageBusy}>{busy ? 'Сохраняем…' : 'Сохранить яйцо'}</button></div>
+              <div className="admin-form-actions"><button className="button button--primary" disabled={busy || imageBusy}>{busy ? 'Сохраняем…' : 'Сохранить контейнер'}</button></div>
             </form>)}
           </div>
         </>}
@@ -271,26 +347,59 @@ export default function AdminPanel({ initData, onCatalogChanged }: AdminPanelPro
             <div className="admin-form-heading"><h3>Создать партию кодов</h3></div>
             <div className="admin-form-grid">
               {field('Название партии', batchForm.label, (v) => setBatchForm((s) => ({ ...s, label: v })), { required: true, placeholder: 'Например, призы за викторину' })}
-              {field('Количество кодов (1–500)', batchForm.count, (v) => setBatchForm((s) => ({ ...s, count: Number(v) })), { type: 'number', min: 1, max: 500, required: true })}
-              {field('Название награды', batchForm.reward_name, (v) => setBatchForm((s) => ({ ...s, reward_name: v })), { required: true, maxLength: 80, placeholder: 'Например, Секретный набор' })}
-              {field('Редкость награды (можно свою)', batchForm.reward_rarity, (v) => setBatchForm((s) => ({ ...s, reward_rarity: v })), { required: true, maxLength: 32, placeholder: 'Обычная, Секретная, Ивентовая…' })}
-              {field('Золото в награде (0–100 000 000)', batchForm.reward_gold, (v) => setBatchForm((s) => ({ ...s, reward_gold: Number(v) })), { type: 'number', min: 0, max: 100000000, required: true })}
-              <label className="field"><span className="field-label">Иномекон в награде (необязательно)</span><select value={batchForm.reward_creature_slug ?? ''} onChange={(e) => setBatchForm((s) => ({ ...s, reward_creature_slug: e.target.value }))}><option value="">Не выдавать иномекона</option>{species.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.slug}>{item.name} · {item.rarity}</option>)}</select></label>
+              {field('Количество карточек (1–500)', batchForm.count, (v) => setBatchForm((s) => ({ ...s, count: Number(v) })), { type: 'number', min: 1, max: 500, required: true })}
+              <label className="field"><span className="field-label">Тип награды</span><select value={batchForm.reward_mode} onChange={(e) => setBatchForm((s) => ({ ...s, reward_mode: e.target.value as 'fixed' | 'random' }))}><option value="random">Случайная награда для каждого QR</option><option value="fixed">Одинаковая награда для всех QR</option></select></label>
+              {batchForm.reward_mode === 'fixed' ? <>
+                {field('Название награды', batchForm.reward_name, (v) => setBatchForm((s) => ({ ...s, reward_name: v })), { required: true, maxLength: 80, placeholder: 'Например, Секретный набор' })}
+                {field('Редкость награды', batchForm.reward_rarity, (v) => setBatchForm((s) => ({ ...s, reward_rarity: v })), { required: true, maxLength: 32, placeholder: 'Обычная, Секретная, Ивентовая…' })}
+                {field('Золото в награде', batchForm.reward_gold, (v) => setBatchForm((s) => ({ ...s, reward_gold: Number(v) })), { type: 'number', min: 0, max: 100000000, required: true })}
+                <label className="field"><span className="field-label">Иномекон в награде (необязательно)</span><select value={batchForm.reward_creature_slug ?? ''} onChange={(e) => setBatchForm((s) => ({ ...s, reward_creature_slug: e.target.value }))}><option value="">Не выдавать иномекона</option>{species.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.slug}>{item.name} · {item.rarity}</option>)}</select></label>
+              </> : <>
+                {field('Золото от', batchForm.reward_gold_min, (v) => setBatchForm((s) => ({ ...s, reward_gold_min: Number(v) })), { type: 'number', min: 0, max: 100000000, required: true })}
+                {field('Золото до', batchForm.reward_gold_max, (v) => setBatchForm((s) => ({ ...s, reward_gold_max: Number(v) })), { type: 'number', min: 0, max: 100000000, required: true })}
+                <div className="field admin-field-wide"><span className="field-label">Какие редкости могут выпасть?</span><div className="admin-rarity-checks">{RARITY_OPTIONS.map((option) => <label key={option.value}><input type="checkbox" checked={batchForm.reward_creature_rarities.includes(option.value)} onChange={(e) => setBatchForm((s) => ({ ...s, reward_creature_rarities: e.target.checked ? [...s.reward_creature_rarities, option.value] : s.reward_creature_rarities.filter((rarity) => rarity !== option.value) }))} />{option.label}</label>)}</div><small>Редкости выбираются с весами: обычные встречаются чаще, мифические — реже. Каждый QR получает собственную случайную награду.</small></div>
+              </>}
               {field('Срок действия (дней, 0 = без срока)', batchForm.expires_in_days, (v) => setBatchForm((s) => ({ ...s, expires_in_days: Number(v) })), { type: 'number', min: 0, max: 365, required: true })}
             </div>
-            <p className="admin-hint">Можно выдать только золото, только иномекона или оба вида награды. Редкость — настраиваемая подпись награды; редкость самого иномекона задаётся в каталоге.</p>
-            <div className="admin-form-actions"><button className="button button--primary" disabled={busy}>{busy ? 'Создаём…' : 'Создать коды'}</button></div>
+            <p className="admin-hint">Каждый QR-код открывает бота с уже встроенным промокодом; второй QR ведёт в основной канал. Карточки сразу откроются в печати.</p>
+            <div className="admin-form-actions"><button className="button button--primary" disabled={busy}>{busy ? 'Создаём…' : 'Создать и распечатать QR'}</button></div>
           </form>
-          {createdBatch && <div className="surface admin-code-result"><div className="admin-form-heading"><div><h3>Новая партия: {createdBatch.label}</h3><p>{createdBatch.reward_name} · {createdBatch.reward_rarity} · {createdBatch.reward_gold} золота{createdBatch.reward_creature_slug ? ` + ${creatureName(species, createdBatch.reward_creature_slug)}` : ''}</p><p>Сохрани коды: они покажутся здесь сейчас, а потом будут доступны в истории.</p></div><button className="button button--secondary button--small" onClick={() => void copyCodes(createdBatch.codes.join('\n'))}>Копировать все</button></div><textarea readOnly rows={Math.min(12, Math.max(4, createdBatch.codes.length))} value={createdBatch.codes.join('\n')} /><p className="admin-hint">Создано кодов: {createdBatch.count}.</p></div>}
+          {createdBatch && <div className="surface admin-code-result"><div className="admin-form-heading"><div><h3>Новая партия: {createdBatch.label}</h3><p>{createdBatch.reward_mode === 'random' ? `Случайная награда · ${createdBatch.reward_gold_min}–${createdBatch.reward_gold_max} золота · редкости: ${(createdBatch.reward_creature_rarities ?? []).map((r) => RARITY_OPTIONS.find((o) => o.value === r)?.label ?? r).join(', ') || 'только золото'}` : `${createdBatch.reward_name} · ${createdBatch.reward_rarity} · ${createdBatch.reward_gold} золота${createdBatch.reward_creature_slug ? ` + ${creatureName(species, createdBatch.reward_creature_slug)}` : ''}`}</p><p>Коды сохранены; бот-QR открывает Mini App с автоматической активацией, второй ведёт в основной канал.</p></div><div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => void preparePrint(createdBatch.codes).catch((caught) => setError(explain(caught)))}>Печать QR снова</button><button className="button button--secondary button--small" onClick={() => void copyCodes(createdBatch.codes.join('\n'))}>Копировать все коды</button></div></div><textarea readOnly rows={Math.min(12, Math.max(4, createdBatch.codes.length))} value={createdBatch.codes.join('\n')} /><p className="admin-hint">Создано карточек: {createdBatch.count}.</p></div>}
           {viewCodes && <div className="surface admin-code-result"><div className="admin-form-heading"><div><h3>Коды партии №{viewCodes.batch_id}</h3><p>Коды, которые уже были активированы, тоже остаются в списке.</p></div><button className="icon-button" onClick={() => setViewCodes(null)} aria-label="Закрыть">×</button></div><textarea readOnly rows={Math.min(12, Math.max(4, viewCodes.codes.length))} value={viewCodes.codes.map((item) => `${item.code ?? 'Исходный код не сохранён'}${item.redeemed_at ? ` — активирован ${prettyDate(item.redeemed_at)}` : ''}`).join('\n')} /><div className="admin-form-actions"><button className="button button--secondary button--small" onClick={() => void copyCodes(viewCodes.codes.map((item) => item.code ?? '').filter(Boolean).join('\n'))}>Копировать коды</button></div>{viewCodes.unavailable_count > 0 && <p className="admin-hint">У {viewCodes.unavailable_count} старых кодов нельзя восстановить исходный текст: до обновления в базе хранился только хеш. Новые коды сохраняются и будут доступны здесь.</p>}</div>}
           <div className="admin-list">{batches.map((item) => <article className="surface admin-batch" key={item.id}>
             <div className="admin-batch-top"><div><h3>{item.label}</h3><small>Партия №{item.id} · создана {prettyDate(item.created_at)}</small></div><span className={`admin-status ${item.revoked_at ? '' : 'is-active'}`}>{item.revoked_at ? 'Отозвана' : 'Активна'}</span></div>
             <p className="admin-reward-label"><strong>{item.reward_name || 'Награда'}</strong><span>{item.reward_rarity || 'Обычная'}</span></p>
-            <div className="admin-batch-metrics"><span><strong>{item.code_count}</strong> кодов</span><span><strong>{item.redeemed_count}</strong> активировано</span><span><strong>{item.reward_gold}</strong> золота</span><span><strong>{creatureName(species, item.reward_creature_slug)}</strong></span><span>Срок: <strong>{prettyDate(item.expires_at)}</strong></span></div>
-            <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => void openCodes(item.id)} disabled={busy}>Показать коды</button>{!item.revoked_at && <button className="button button--ghost button--small" onClick={() => void revokeBatch(item)} disabled={busy}>Отозвать</button>}<button className="button button--ghost button--small" onClick={() => void deleteBatch(item)} disabled={busy || item.redeemed_count > 0}>Удалить</button></div>
+            <div className="admin-batch-metrics"><span><strong>{item.code_count}</strong> кодов</span><span><strong>{item.redeemed_count}</strong> активировано</span><span><strong>{item.reward_mode === 'random' ? `${item.reward_gold_min ?? 0}–${item.reward_gold_max ?? item.reward_gold}` : item.reward_gold}</strong> золота</span><span><strong>{creatureName(species, item.reward_creature_slug)}</strong></span><span>Срок: <strong>{prettyDate(item.expires_at)}</strong></span></div>
+            <div className="admin-item-actions"><button className="button button--secondary button--small" onClick={() => void openCodes(item.id)} disabled={busy}>Показать коды</button><button className="button button--secondary button--small" onClick={() => void printBatch(item.id)} disabled={busy || !!item.revoked_at}>Печать QR</button>{!item.revoked_at && <button className="button button--ghost button--small" onClick={() => void revokeBatch(item)} disabled={busy}>Отозвать</button>}<button className="button button--ghost button--small" onClick={() => void deleteBatch(item)} disabled={busy || item.redeemed_count > 0}>Удалить</button></div>
           </article>)}{!batches.length && <div className="surface admin-empty">Партий пока нет.</div>}</div>
         </>}
+
+        {section === 'leaderboard' && <>
+          <div className="admin-section-heading"><div><h2>Скрытие игроков в лидерборде</h2><p>Игрок продолжит видеть собственное место. Для остальных он исчезнет из рейтинговых списков.</p></div></div>
+          <label className="field admin-leaderboard-filter"><span className="field-label">Найти игрока</span><input value={leaderboardFilter} onChange={(event) => setLeaderboardFilter(event.target.value)} placeholder="Имя, @username или Telegram ID" /></label>
+          <div className="admin-list">
+            {leaderboardPlayers.filter((item) => `${item.name} ${item.username ?? ''} ${item.telegram_id}`.toLowerCase().includes(leaderboardFilter.trim().toLowerCase())).map((item) => <article className={`surface admin-item ${item.hidden ? 'admin-item--archived' : ''}`} key={item.telegram_id}>
+              <div className="admin-item-content"><div className="admin-item-title"><h3>{item.name}</h3><span className={`admin-status ${item.hidden ? '' : 'is-active'}`}>{item.hidden ? 'Скрыт у других' : 'В рейтинге'}</span></div><small>Telegram ID: {item.telegram_id}{item.username ? ` · @${item.username.replace(/^@/, '')}` : ''}</small></div>
+              <div className="admin-item-actions"><button className={`button button--small ${item.hidden ? 'button--secondary' : 'button--danger'}`} disabled={busy} onClick={() => void setLeaderboardVisibility(item, !item.hidden)}>{item.hidden ? 'Вернуть в рейтинг' : 'Скрыть у других'}</button></div>
+            </article>)}
+            {!leaderboardPlayers.length && <div className="surface admin-empty">Игроков пока нет.</div>}
+            {!!leaderboardPlayers.length && !leaderboardPlayers.some((item) => `${item.name} ${item.username ?? ''} ${item.telegram_id}`.toLowerCase().includes(leaderboardFilter.trim().toLowerCase())) && <div className="surface admin-empty">По этому запросу игроков нет.</div>}
+          </div>
+        </>}
       </>}
+
+      <div className="print-sheet" aria-hidden="true">
+        {printCards.map((card, index) => <article className="print-qr-card" key={`${card.code}-${index}`}>
+          <div className="print-brand"><strong>INOMECOPS</strong><span>НАГРАДА ЗА УЧАСТИЕ</span></div>
+          <h3>Сканируй, участвуй, получай награду!</h3>
+          <p>Отсканируй QR-код бота, чтобы забрать награду. Подпишись на основной канал, чтобы следить за новыми событиями.</p>
+          <div className="print-qr-pair">
+            <div className="print-qr-item"><img src={card.bot_qr} alt="QR-код бота с наградой" /><strong>Бот · забрать награду</strong></div>
+            <div className="print-qr-item"><img src={card.channel_qr} alt="QR-код основного канала" /><strong>Основной канал</strong></div>
+          </div>
+          <small>Код награды: {card.code}</small>
+        </article>)}
+      </div>
     </section>
   );
 }

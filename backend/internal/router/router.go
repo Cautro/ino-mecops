@@ -74,6 +74,9 @@ func New(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/admin/code-batches/{id}/codes", protected(http.HandlerFunc(deps.Admin.ListBatchCodes)))
 	mux.Handle("POST /api/v1/admin/code-batches/{id}/revoke", protected(http.HandlerFunc(deps.Admin.RevokeBatch)))
 	mux.Handle("DELETE /api/v1/admin/code-batches/{id}", protected(http.HandlerFunc(deps.Admin.DeleteBatch)))
+	mux.Handle("GET /api/v1/admin/leaderboard-players", protected(http.HandlerFunc(deps.Admin.ListLeaderboardPlayers)))
+	mux.Handle("POST /api/v1/admin/leaderboard-players/{id}/hide", protected(http.HandlerFunc(deps.Admin.HideLeaderboardPlayer)))
+	mux.Handle("DELETE /api/v1/admin/leaderboard-players/{id}/hide", protected(http.HandlerFunc(deps.Admin.ShowLeaderboardPlayer)))
 
 	// Admin catalog: species and their abilities. All mutations are checked against ADMIN_TELEGRAM_IDS.
 	mux.Handle("GET /api/v1/admin/abilities", protected(http.HandlerFunc(deps.Catalog.ListAbilities)))

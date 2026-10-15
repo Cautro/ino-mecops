@@ -135,7 +135,7 @@ func (h *Handler) Leaderboards(w http.ResponseWriter, r *http.Request) {
 		services.WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация.")
 		return
 	}
-	data, err := h.store.Leaderboards(r.Context())
+	data, err := h.store.Leaderboards(r.Context(), user.ID)
 	if err != nil {
 		log.Printf("Leaderboards failed: player=%d err=%v", user.ID, err)
 		services.WriteError(w, http.StatusInternalServerError, "leaderboard_failed", "Не удалось загрузить таблицу лидеров. Ошибка записана в журнал, попробуй позже.")
